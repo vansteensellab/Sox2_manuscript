@@ -1,6 +1,6 @@
 # Sox2_manuscript
 
-Introduction
+## Introduction
 In this study we investigated the Sox2 genomic locus in mESCs to better understand the positional relationship between the mouse Sox2 gene and its distal enhancer. We created high-resolution functional maps of the locus by relocating different Sox2-reporters to >1,000 alternative positions. 
 
 Repository guide
