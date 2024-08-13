@@ -1,0 +1,171 @@
+# TEMPLATE CONFIGURATION FILE FOR TRANSPOSON INTEGRATION MAPPING PIPELINE
+
+# ------------------------------------------------------------------------------
+# RUNNING THE PIPELINE:
+# (1) ACTIVATE THE CONDA ENVIRONMENT
+#     conda activate /DATA/scratch/usr/c.leemans/miniconda3/envs/tagmap_hop
+# (2) RUN SNAKEMAKE
+#     {PIPELINE CONFIGURATION FILE} = .yaml file such as this file, with the
+#         Path should not be surrounded by quotes, example:
+#         /DATA/usr/k.rademaker/projects/tagmap_hopping/template_pipeline_run.yaml
+#     snakemake -j 40 -s /DATA/usr/k.rademaker/projects/tagmap_hopping/src/tn5_hopping.snake --configfile /DATA/usr/c.moene/projects/Hopping_Sox2_mTurq/E2344_mapping_clones/CM20231124_E2344_config.yaml
+# ------------------------------------------------------------------------------
+
+
+# ------------------------------------------------------------------------------
+# VARIABLE CONFIGURATION:
+# ------------------------------------------------------------------------------
+# input_dir = Input directory for sequencing files (FASTQ).
+#     Path should be a string, surrounded by quotes.
+#     Path should not end with a forward slash.
+input_dir: '/shared/gcf/c.moene/7536/M998_fastq_files'
+
+# outdir = Output directory for pipeline results.
+#     Path should not be a string, give the absolute path without quotes.
+#     Path should not end with a forward slash.
+outdir: /DATA/usr/c.moene/projects/Hopping_Sox2_mTurq/E2344_mapping_clones/pipeline_output
+
+# input_info = Configuration file with information on the input files.
+#     Path should not be a string, give the absolute path without quotes.
+#     File should be tab-separated with the following columns in any order:
+#        Sample_name - A unique identifier for the read pairs (so every ID occurs up to 2 times)
+#        structure - the structure of the constant part of the sequence (e.g. Sleeping Beauty transposon arm)
+#        genome - which genome version to use (has to be same name as in bowtie_index)
+#        mate - which mate of the paired-end sequence is used (R1 or R2)
+#        file - filename, if no input_dir is given a full path is required.
+#        construct_type - type of construct used, necessary to find back expected part on both side of insertion.
+input_info: /DATA/usr/c.moene/projects/Hopping_Sox2_mTurq/E2344_mapping_clones/CM20231124_E2344_configFile.tsv
+
+# pairing_info = Configuration file linking sample names from 'input_info' belonging to the same construct.
+#     Path should be a string, surrounded by quotes.
+pairing_info: '/DATA/usr/c.moene/projects/Hopping_Sox2_mTurq/E2344_mapping_clones/CM20231124_E2344_pairingFile.tsv'
+
+# min_max_mapq = Minimum read MAPQ for (putative) integration sites.
+#     Paired - Paired-end sequencing reads, (default)
+min_max_mapq:
+    paired: 10
+    single: 10
+
+# min_depth = Minimum read depth for (putative) integration sites.
+#     Paired - Paired-end sequencing reads, (default)
+min_depth:
+    paired: 1
+    single: 1
+
+
+# ------------------------------------------------------------------------------
+# DEFAULT CONFIGURATION (DO NOT CHANGE UNLESS REQUIRED):
+# ------------------------------------------------------------------------------
+# insert_ori = Orientation for in silico integrations.
+insert_ori: fwd
+
+# insertion_site = Transposon system characteristic insertion site.
+insertion_site:
+    PB: TTAA
+    SB: TA
+    CRISPR: "-"
+
+# structure = Structure formatting of transposon system.
+#     For_SB = Sleeping Beauty, forward tagmentation reaction
+#     Rev_SB = Sleeping Beauty, reverse tagmentation reaction
+#     For_PB = PiggyBac, forward tagmentation reaction
+#     Rev_PB = PiggyBac, reverse tagmentation reaction
+structure:
+    For_SB: |
+        ID      5'             3' type                       req     second-read pos   keep-bases
+        Tn5_constant      CGTCGGCAGCGTCAGATGTGTATAAGAGACAG  -  const   -  False var -
+        SleepingBeaty_rc  -  TACAGTTGAAGTCGGAAGTTTACATACACCTT  const   -       False var 2
+        SleepingBeaty      AGTGAGTTTAAATGTATTTGGCTAAGGTGTATGTAAACTTCCGACTTCAACTGTA -  const  present  True  var  2
+        Tn5_constant_rc  -  CTGTCTCTTATACACATCTGACGCTGCCGACG  const   -        True var -
+    Rev_SB: |
+        ID      5'    3' type    req     second-read pos   keep-bases
+        Tn5_constant      CGTCGGCAGCGTCAGATGTGTATAAGAGACAG  -  const   - False var -
+        SleepingBeaty_rc  -  TACAGTTGAAGTCGGAAGTTTACATACACTTA  const   -       False var 2
+        SleepingBeaty      AAACGAGTTTTAATGACTCCAACTTAAGTGTATGTAAACTTCCGACTTCAACTGTA  -  const   present True  var 2
+        Tn5_constant_rc  -  CTGTCTCTTATACACATCTGACGCTGCCGACG  const   -       True var -
+    For_PB: |
+        ID      5'             3' type                       req     second-read pos   keep-bases
+        Tn5_constant      CGTCGGCAGCGTCAGATGTGTATAAGAGACAG  -  const   -  False var -
+        PiggyBac_rc  -  TTAACCCTAGAAAGATAATCATAT  const   -       False var 4
+        PiggyBac      GTACGTCACAATATGATTATCTTTCTAGGGTTAA -  const  present  True  var  4
+        Tn5_constant_rc  -  CTGTCTCTTATACACATCTGACGCTGCCGACG  const   -        True var -
+    Rev_PB: |
+        ID      5'    3' type    req     second-read pos   keep-bases
+        Tn5_constant      CGTCGGCAGCGTCAGATGTGTATAAGAGACAG  -  const   - False var -
+        PiggyBac_rc  -  TTAACCCTAGAAAGATAGTCTGCGTAAAATTGACG  const   -       False var 4
+        PiggyBac      CGTCAATTTTACGCAGACTATCTTTCTAGGGTTAA  -  const   present True  var 4
+        Tn5_constant_rc  -  CTGTCTCTTATACACATCTGACGCTGCCGACG  const   -       True var -
+
+# samtools = Path to samtools software.
+samtools: samtools
+
+# mapper = Path to read aligner software.
+mapper: bowtie2
+
+# mapper_options = Parameters for mapper.
+mapper_options: "--very-sensitive"
+
+# parser = Path to (modified) Cutadapt read parser.
+parser: /DATA/usr/k.rademaker/projects/tagmap_hopping/src/read_parser.py
+
+# bowtie_index = Path to reference genome index files.
+bowtie_index:
+    mm10: "/DATA/usr/k.rademaker/projects/tagmap_hopping/data/bowtie2_index/mm10/mm10_1-19_XYM"
+    hg38: "/DATA/usr/k.rademaker/projects/tagmap_hopping/data/bowtie2_index/hg38/hg38_1-22_XYM"
+
+# ref_fasta = Reference genome sequence file (FASTA).
+ref_fasta:
+    mm10: "/DATA/usr/k.rademaker/projects/tagmap_hopping/data/ref_genomes/mm10/mm10_1-19_XYM.fa"
+    hg38: "/DATA/usr/k.rademaker/projects/tagmap_hopping/data/ref_genomes/hg38/hg38_1-22_XYM.fa"
+
+# chrom_sizes = Reference genome chromosome sizes file.
+chrom_sizes:
+    mm10: "/DATA/usr/k.rademaker/projects/tagmap_hopping/data/ref_genomes/mm10/mm10.chrom.sizes"
+    hg38: "/DATA/usr/k.rademaker/projects/tagmap_hopping/data/ref_genomes/hg38/hg38.chrom.sizes"
+
+# hybrid = Genetic variant files for hybrid genomes.
+#     CAST-129S - F1 hybrid mouse cell line.
+hybrid:
+    CAST-129S:
+        CAST:
+            /DATA/scratch/usr/c.leemans/data/GRCm38/species/CAST_EiJ.mgp.v5.snps.dbSNP142.20150105.filtered.vcf.gz
+        129S:
+            /DATA/scratch/usr/c.leemans/data/GRCm38/species/129S1_SvImJ.mgp.v5.snps.dbSNP142.20150105.filtered.vcf.gz
+
+# home_location = Location of home construct.
+home_location:
+    homology_arms:
+        F1CBS_16:
+            /DATA/usr/k.rademaker/projects/tagmap_hopping/data/transposons/F1_CBS16_arms.fa
+        23_34_A1:
+            /DATA/usr/c.moene/projects/Hopping_Sox2_mTurq/info_files/CM20230120_clone_23_34_A1_arms.fa
+        F1_NanogSB:
+            /DATA/usr/c.moene/projects/Single_cell_hopping/data/CM20220523_NanogSB_arms.fa
+            
+# home_sequence = Sequence of home construct.
+home_sequence:
+    F1CBS_16:
+        /DATA/usr/k.rademaker/projects/tagmap_hopping/data/transposons/F1CBS_16_2nd_file.fa
+    23_34_A1_LP:
+        /DATA/usr/c.moene/projects/Hopping_Sox2_mTurq/info_files/CM20230120_clone_23_34_A1_LP.fa
+    NanogSB_PB_LP:
+        /DATA/usr/c.moene/projects/Single_cell_hopping/data/CM20220523_NanogSB_PB_LP.fa
+
+
+# add_to_refgenome = Transposon construct to add to reference genome.
+add_to_refgenome:
+    Tn5_plasmid:
+        "/DATA/usr/k.rademaker/projects/tagmap_hopping/data/transposons/His-SUMO3-Tn5.fa"
+
+
+# ------------------------------------------------------------------------------
+# DEPRECATED PARAMETERS
+# ------------------------------------------------------------------------------
+# mingap = Permitted gap distance around reads to combine reads into putative integration sites.
+mingap: 0
+report_yaml: '/DATA/scratch/usr/c.leemans/projects/tagmap_hopping/src/scripts/pipeline_report.yaml'
+max_pair_dist: 15000000
+random_n: 10000
+mast_minp:
+    PB: 0.006
+    SB: 0.08
