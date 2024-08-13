@@ -1,0 +1,558 @@
+---
+title: "Figure1_CM20240813_method_locus"
+author: "Mathias & Christine"
+date: "2024-08-12"
+output: 
+  html_document:
+    theme: journal #cerulean
+    highlight: monochrome
+    toc: true
+    toc_float: true
+    code_folding: show
+  editor_options:
+    chunk_output_type: console
+---
+
+#Goal:
+Create the figure panels describing the Sox2 locus and the proof-of-principle hopping experiment.
+
+
+#Outline: 
+- Plot RCMC triangle plot 
+- Load hopping data
+- Plot histogram integrations (stranded and unstranded)
+- Plot barplots cis/trans integrations
+
+
+# Set-up
+##Libraries
+Load the libraries and set the parameters.
+```{r load_libraries}
+
+# Load dependencies
+library(GenomicRanges)
+library(rtracklayer)
+library(gtools)
+library(tidyverse)
+library(dplyr)
+library(ggplot2)
+library(stringr)
+library(readr)
+library(knitr)
+library(RColorBrewer)
+library(cowplot)
+library(ggpubr)
+library(GENOVA)
+
+split_string <- function(vect,sep,N1,N2=N1){
+  library(stringr)
+  sapply(vect, function(X){
+    paste(str_split(X,sep)[[1]][N1:N2],collapse = sep)
+  },USE.NAMES = F)
+}
+```
+
+## Paths & parameters
+
+```{r paths_parameters}
+#datatag
+datetag = paste0("CM",format(Sys.time(), '%Y%m%d'))
+
+# Prepare output 
+output_dir <- paste0("/DATA/projects/Sox2/Figure_method_locus/analysis_",datetag)
+dir.create(output_dir, showWarnings = FALSE)
+
+```
+
+```{r knits setup}
+
+library(knitr)
+opts_chunk$set(cache = T,
+               message = F, warning = F,
+               dev=c('png', 'pdf'), 
+               dpi = 600,
+               fig.path = paste0(file.path(output_dir), "/figures/")) 
+pdf.options(useDingbats = FALSE)
+```
+
+
+
+
+# Relevant annotations
+```{r relevant annotations}
+# Location of enhancer / gene
+enhancer <- GRanges(seqnames = "chr3", 
+                    ranges = IRanges(start = 34753415,
+                                     end = 34766401),
+                    strand = "*")
+
+#gene based on mm10, RefSeq annotation
+Sox2_gene <- GRanges(seqnames = "chr3", 
+                    ranges = IRanges(start = 34649995,
+                                     end = 34652461),
+                    strand = "+")
+
+#launch pads
+landingPad_23 <- GRanges(seqnames = "chr3", 
+                    ranges = IRanges(start = 34643960,
+                                     end = 34643962),
+                    strand = "+")
+
+# new analysis (based on mapping to mm10 only)
+CTCF_mm10_new <- import.bed('/DATA/usr/v.franceschini/Workspaces/2024_01_MATHIAS_CTCF_PEAKS/VF240812_calling_CTCF_motifs_again/02_OUTPUTS/CTCF_sites/6764_2_ME_E2_CGATGT_S2_R1_001_peaks_motifs.bed')
+
+#filtering:
+CTCF_mm10.chr3 <- CTCF_mm10_new[seqnames(CTCF_mm10_new)== 'chr3']
+# apparently also this dataset doesn't have the border CTCF (HOW? WHY?) Add it manually, again.
+# add the missing site after the SCR
+CTCF_mm10.chr3_extra = sort(c(CTCF_mm10.chr3,
+                         GRanges(seqnames = "chr3",
+                                 IRanges(start = 34772210, end = 34772210),
+                                 strand = "+")),
+                         ignore.strand = T)
+
+prange_plot = c(32643960, 36643960) #+/- 2MB from landing pad
+```
+
+
+
+# Import data
+Now import directly from the table we prepared for GEO submission (contains all integration from E2226, already annotated)
+```{r import_E2226_hopping_data}
+# 
+# 
+# MappingDataDir_E2226<- "/DATA/usr/m.eder/projects/Tn5_tagmentation/E2226/pipeline_results/mm10/hopping/insertions_ref"
+# 
+# # List all files
+# metadata_E2226 <- tibble(file = dir(MappingDataDir_E2226, 
+#                    recursive = T, full.names = T)) %>%
+#   # filter(grepl("insertions_ref", file)) %>%
+#   mutate(sample = str_remove(basename(file), "\\..*"))
+# 
+# metadata_E2226_CRE6ctrl = metadata_E2226 %>%
+#   filter(grepl("CRE6_non_sorted", sample))
+# 
+# # Load all files
+# tib_E2226 <- bind_rows(lapply(1:nrow(metadata_E2226_CRE6ctrl),
+#                         function(i) {
+#                           tmp <- read_tsv(metadata_E2226_CRE6ctrl$file[i],
+#                                           col_types = cols(
+#                                             .default = col_character(),
+#                                             start = col_double(),
+#                                             end = col_double(),
+#                                             # gap_concordance = col_double(),
+#                                             read_count = col_double(),
+#                                             mapq = col_double(),
+#                                             read_count_1 = col_double(),
+#                                             mapq_1 = col_character(),
+#                                             read_count_2 = col_double(),
+#                                             mapq_2 = col_character(),
+#                                             # sump = col_double(),
+#                                             # p_adj = col_double()
+#                                           )) %>%
+#                             mutate(sample = metadata_E2226_CRE6ctrl$sample[i])
+#                         })) 
+
+tib_E2226 <- read_tsv("/DATA/projects/Sox2/GEO_collection/Tagmentation/mapped_integrations_short_neutral_insert.txt")
+```
+## Modify tibble
+```{r modify tibble}
+
+# Change mapping quality to numeric
+tib_E2226 <- tib_E2226 %>%
+  mutate(mapq_1 = as.numeric(mapq_1),
+         mapq_2 = as.numeric(mapq_2),
+         mapq_1 = replace_na(mapq_1, 0),
+         mapq_2 = replace_na(mapq_2, 0))
+
+# Factors for chr
+chromosomes <- paste0("chr", c(1:19, "X"))
+
+tib_E2226 <- tib_E2226 %>%
+  mutate(chr = factor(chr, levels = chromosomes)) %>%
+  drop_na(chr)
+
+tib_E2226 = tib_E2226 %>% 
+  mutate(cell_line = "CRE6",
+         population = "ctrl") %>%
+  mutate(mapped_arms = case_when(read_count_1 == 0 ~ "rv_only",
+                                 read_count_2 == 0 ~ "fw_only",
+                                 read_count_1 > 0 & read_count_2 > 0 ~ "both_arms")) %>%
+  mutate(hopped = start != 34643961) 
+
+#Filter table
+tib_E2226_filt = tib_E2226 %>% 
+  filter(population == "ctrl" | read_count >= 2) %>% #require at least two reads except for ctrl
+  filter(!(start >= 34721183 & start <= 34721192)) %>% #remove contamination from LP8
+  filter(strand %in% c("+", "-")) #because we sometimes split by strand, I'd prefer to remove the ambiguous integrations from all analyses
+
+#E2226 had 10 control reactions sequenced with separate indices, here we combine them to get comparable data to the other experiments (with 1 index pair for the control pool)
+tib_E2226_comb = tib_E2226_filt %>%
+  group_by(cell_line, population, chr, start, end, seq, strand, experiment) %>%
+  summarize(read_count = sum(read_count),
+            read_count_1 = sum(read_count_1),
+            read_count_2 = sum(read_count_2)) %>%
+  mutate(sample = paste0(cell_line, "_", population))  %>%
+  mutate(mapped_arms = case_when(read_count_1 == 0 ~ "rv_only",
+                                 read_count_2 == 0 ~ "fw_only",
+                                 read_count_1 > 0 & read_count_2 > 0 ~ "both_arms")) %>%
+  mutate(hopped = start != 34643961) 
+
+kable(tib_E2226_comb %>% group_by(population, cell_line) %>% summarise(n = n()))
+```
+# 3D genome annotation
+
+## LiftOver chains
+
+```{r}
+# download.file('https://hgdownload.soe.ucsc.edu/goldenPath/mm9/liftOver/mm9ToMm10.over.chain.gz',
+#               "/DATA/usr/c.moene/projects/Hopping_Sox2_mTurq/general_analyses/region_capture_microC/mm9ToMm10.over.chain.gz")
+# download.file('https://hgdownload.soe.ucsc.edu/goldenPath/mm10/liftOver/mm10ToMm9.over.chain.gz',
+#               "/DATA/usr/c.moene/projects/Hopping_Sox2_mTurq/general_analyses/region_capture_microC/mm10ToMm9.over.chain.gz")
+# download.file('https://hgdownload.soe.ucsc.edu/goldenPath/mm39/liftOver/mm39ToMm10.over.chain.gz',
+#               "/DATA/usr/c.moene/projects/Hopping_Sox2_mTurq/general_analyses/region_capture_microC/mm39ToMm10.over.chain.gz")
+# download.file('https://hgdownload.soe.ucsc.edu/goldenPath/mm10/liftOver/mm10ToMm39.over.chain.gz',
+#               "/DATA/usr/c.moene/projects/Hopping_Sox2_mTurq/general_analyses/region_capture_microC/mm10ToMm39.over.chain.gz")
+
+# library(R.utils)
+# gunzip("/DATA/usr/c.moene/projects/Hopping_Sox2_mTurq/general_analyses/region_capture_microC/mm9ToMm10.over.chain.gz")
+# gunzip("/DATA/usr/c.moene/projects/Hopping_Sox2_mTurq/general_analyses/region_capture_microC/mm10ToMm9.over.chain.gz")
+# gunzip("/DATA/usr/c.moene/projects/Hopping_Sox2_mTurq/general_analyses/region_capture_microC/mm39ToMm10.over.chain.gz")
+# gunzip("/DATA/usr/c.moene/projects/Hopping_Sox2_mTurq/general_analyses/region_capture_microC/mm10ToMm39.over.chain.gz")
+
+chain_mm9_to_mm10 = import.chain("/DATA/usr/c.moene/projects/Hopping_Sox2_mTurq/general_analyses/region_capture_microC/mm9ToMm10.over.chain")
+chain_mm10_to_mm9 = import.chain("/DATA/usr/c.moene/projects/Hopping_Sox2_mTurq/general_analyses/region_capture_microC/mm10ToMm9.over.chain")
+chain_mm10_to_mm39 = import.chain("/DATA/usr/c.moene/projects/Hopping_Sox2_mTurq/general_analyses/region_capture_microC/mm10ToMm39.over.chain")
+chaim_mm39_to_mm10 = import.chain("/DATA/usr/c.moene/projects/Hopping_Sox2_mTurq/general_analyses/region_capture_microC/mm39ToMm10.over.chain")
+#landingPad_23_mm39= liftOver()
+
+```
+
+
+## Load RCMC data
+```{r}
+WT_file = "/DATA/usr/c.moene/projects/Hopping_Sox2_mTurq/general_analyses/region_capture_microC/CM20230718_GSM6281849_RCMC_BR1_merged_allCap_WT_mm39.merged.50.mcool"
+
+RCMC_1kb = load_contacts(signal_path = WT_file,
+                      sample_name = 'WT',
+                      resolution = 1000)
+```
+
+
+
+
+```{r B_RCMC_pyramid_annotated, fig.width = 7.2, fig.height = 3}
+#plotting range on mm39
+plot_range_hiC = c(34.65E6,
+                   34.9E6)
+
+#annotations
+annotation_gr_mm10 = c(Sox2_gene, enhancer)
+names(annotation_gr_mm10) = c("Sox2", "SCR")
+
+annotation_gr_mm39 = unlist(liftOver(annotation_gr_mm10, chain_mm10_to_mm39))
+bed_tib_mm39 = as_tibble(annotation_gr_mm39)
+
+# CTCF annotation
+CTCF_ROI_mm10 = subsetByOverlaps(CTCF_mm10.chr3_extra, GRanges(seqnames = "chr3", IRanges(start = 30E6, end = 40E6)))
+CTCF_ROI_mm39 = unlist(liftOver(CTCF_ROI_mm10, chain_mm10_to_mm39))
+CTCF_ROI_mm39_tib = as_tibble(CTCF_ROI_mm39)
+  
+p = pyramid(exp = RCMC_1kb,
+        chrom = 'chr3',
+        colour = c(0, 1500),
+        start = plot_range_hiC[1],
+        end=plot_range_hiC[2])
+
+p + 
+  geom_rect(data = bed_tib_mm39, aes(xmin = start, xmax = end), ymin = -30E3, ymax = -10E3) +
+  geom_segment(data = CTCF_ROI_mm39_tib, aes(x = start, xend = start, col = strand), y = -30E3, yend = -10E3) 
+
+```
+# Distribution of integrations
+## unstranded
+```{r C_histogram_integrations_nonstranded, fig.width= 6, fig.height=3}
+
+#Filter integrations for ctrl and being hopped
+
+N_ints_plotted = tib_E2226_comb %>% 
+  filter(population == "ctrl" & chr == "chr3" & hopped) %>% 
+  filter(start >= prange_plot[1] & start <= prange_plot[2]) %>%
+  group_by(cell_line)  %>%
+  summarise(count = n())
+
+pHistogram_non_stranded_10kb = 
+  ggplot(filter(tib_E2226_comb, cell_line == "CRE6" & population == "ctrl" & chr == "chr3" & hopped), 
+         aes(x = start)) + 
+  
+  #plot data
+  geom_histogram(binwidth = 10000, fill = "#997a8d", alpha = 0.6)+
+  geom_density(aes(x = start, y = after_stat(count*10000))) +
+ 
+   # annotate enhancer
+  geom_vline(xintercept = c(start(enhancer), end(enhancer)), col = "#ffb000") +
+  # annotate gene
+  geom_vline(xintercept = c(start(Sox2_gene), end(Sox2_gene)), col = 'red') +
+  # annotate landing pad
+  geom_vline(xintercept = start(landingPad_23), col = 'black', linetype = "dotted") +
+  
+  #layout:
+  theme_classic(base_size = 16) +
+  theme(legend.position = "bottom") +
+  scale_x_continuous(breaks = scales::pretty_breaks(n = 6), 
+                     labels = scales::unit_format(scale = 1E-6, accuracy = 0.1, unit=NULL),
+                     limits=prange_plot, expand = c(0,0)) +
+  scale_y_continuous(limits = c(0, NA), expand = expansion(mult = c(0,0.05))) +
+  labs(y = "Integrations/10kb", x = "genomic coordinates on chr3") +
+  geom_text(data = N_ints_plotted,  inherit.aes = F, aes(label = paste0("n = ", count), x = Inf, y = Inf), vjust = 2, hjust = 1.5 ) +
+  # annotate("text", x = Inf, y = Inf, label = paste0("n = ", N_ints_plotted), vjust = 2, hjust = 2) +
+  ggtitle("Distribution of integrations")
+pHistogram_non_stranded_10kb
+```
+## stranded
+```{r S1F_histogram_integrations_stranded, fig.width= 6, fig.height=4}
+
+#How many integrations do we find in the plotted range
+N_ints_plotted_str = tib_E2226_comb %>% 
+  filter(population == "ctrl" & chr == "chr3" & hopped) %>% 
+  filter(cell_line == "CRE6" & start >= prange_plot[1] & start <= prange_plot[2]) %>%
+  group_by(cell_line, strand) %>%
+  summarise(count = n())
+
+# Stranded
+pHistogram_stranded = 
+  ggplot(filter(tib_E2226_comb, cell_line == "CRE6" & population == "ctrl" & chr == "chr3" & hopped), 
+         aes(x = start)) + 
+  
+  #plot data
+  geom_histogram(binwidth = 10000, fill = "#997a8d", alpha = 0.6)+
+  geom_density(aes(x = start, y = after_stat(count*10000))) +
+  
+  #facet
+  facet_grid(strand ~ .) +
+  
+  # annotate enhancer
+  geom_vline(xintercept = c(start(enhancer), end(enhancer)), col = "#ffb000") +
+  # annotate gene
+  geom_vline(xintercept = c(start(Sox2_gene), end(Sox2_gene)), col = 'red') +
+  # annotate landing pad
+  geom_vline(xintercept = start(landingPad_23), col = 'black', linetype = "dotted") +
+  
+  #layout:
+  theme_classic(base_size = 16) +
+  theme(legend.position = "bottom") +
+  scale_x_continuous(breaks = scales::pretty_breaks(n = 6), 
+                     labels = scales::unit_format(scale = 1E-6, accuracy = 0.1, unit=NULL),
+                     limits=prange_plot,  expand = c(0,0)) +
+  scale_y_continuous(limits = c(0, 40), expand = expansion(mult = c(0,0.05))) + #no space underneath histogram
+  geom_text(data = N_ints_plotted_str,  inherit.aes = F, aes(label = paste0("n = ", count), x = Inf, y = Inf), vjust = 2, hjust = 1.5 ) +
+  labs(y = "Integrations/10kb", x = "genomic coordinates on chr3")
+pHistogram_stranded
+```
+
+# Hopping in cis vs trans
+## chromosome
+```{r int_per_chr, fig.width= 4, fig.height=5 }
+myCols_chr3 = c(chr3 = "tomato3", other_chr = "lightgrey")
+colScale_chr3 <- scale_colour_manual(name = "chr_category", values = myCols_chr3, aesthetics = c("fill","colour"))
+
+
+int_count_per_chr_tib = tib_E2226_comb %>%
+  filter(cell_line == "CRE6" & population == "ctrl" & hopped ) %>%
+  mutate(chr_category = case_when(chr == "chr3" ~ "chr3",
+                                  .default = "other_chr")) %>%
+  group_by(chr, chr_category) %>%
+  summarize(N = n()) %>%
+  ungroup() %>%
+  mutate(prop_chr = N/sum(N))
+
+
+ggplot(int_count_per_chr_tib, aes(x = chr, y = prop_chr, fill = chr_category)) + 
+  geom_col() +
+  theme_classic()+
+  colScale_chr3 +
+  geom_text( aes(label = N), hjust = -0.1, angle = 90) +
+  theme(legend.position = "none") +
+  scale_x_discrete(guide = guide_axis(angle = 90)) +
+  scale_y_continuous(expand = expansion(mult = c(0,0.1))) +
+  labs(x = "chromosome", y = 'fraction of integrations')
+  
+
+```
+
+## unhopped reads
+```{r}
+filter(tib_E2226_comb, cell_line == "CRE6" & population == "ctrl") %>%
+  group_by(hopped) %>%
+  summarize(N_reads = sum(read_count)) %>%
+  mutate(fraction_of_reads = N_reads/sum(N_reads))
+
+```
+
+## allele
+The hopping pipeline outputs a file with allele calls per integrations. These are based on the integration locations in the in silico genome, so they don't match the locations in our final integration tibble.
+I reload the integrations, now on the in silico genome and the allele calls, and match them (for the CRE6 sample only) 
+
+```{r}
+IntsInsilicoDir_E2226 <- "/DATA/usr/m.eder/projects/Tn5_tagmentation/E2226/pipeline_results/mm10/hopping/insertions/"
+
+# List all files
+metadata_insilico_E2226 <- tibble(file = dir(IntsInsilicoDir_E2226, 
+                   recursive = T, full.names = T)) %>%
+   filter(grepl(".txt", file)) %>%
+  mutate(sample = str_remove(basename(file), "\\..*"))
+
+# Load all files
+tib_insilico_E2226 <- bind_rows(lapply(1:nrow(metadata_insilico_E2226),
+                                      function(i) {
+                          tmp <- read_tsv(metadata_insilico_E2226$file[i],
+                                          col_types = cols(
+                                            .default = col_character(),
+                                            start = col_double(),
+                                            end = col_double(),
+                                            # gap_concordance = col_double(),
+                                            read_count = col_double(),
+                                            mapq = col_double(),
+                                            read_count_1 = col_double(),
+                                            mapq_1 = col_character(),
+                                            read_count_2 = col_double(),
+                                            mapq_2 = col_character(),
+                                            # sump = col_double(),
+                                            # p_adj = col_double()
+                                          )) %>%
+                            mutate(sample = metadata_insilico_E2226$sample[i])
+                                      })) 
+
+tib_insilico_E2226 <- tib_insilico_E2226 %>%
+  mutate(chr = factor(chr, levels = chromosomes)) %>%
+  drop_na(chr)
+
+
+# Load the allele specific integration data into R
+AlleleMappingDataDir_E2226 <- "/DATA/usr/m.eder/projects/Tn5_tagmentation/E2226/pipeline_results/mm10/hopping/allelic_insertions/"
+
+# List all files
+metadata_allelic_E2226 <- tibble(file = dir(AlleleMappingDataDir_E2226, 
+                   recursive = T, full.names = T)) %>%
+   filter(grepl(".txt", file)) %>%
+  mutate(sample = str_remove(basename(file), "\\..*"))
+
+# Load all files
+tib_allelic_E2226 <- bind_rows(lapply(1:nrow(metadata_allelic_E2226),
+                                      function(i) {
+                                        tmp <- read_tsv(metadata_allelic_E2226$file[i],
+                                                        col_types = cols(
+                                                          .default = col_character(),
+                                                          start = col_double(),
+                                                          end = col_double(),
+                                                        )) %>%
+                                          mutate(sample = metadata_allelic_E2226$sample[i])
+                                      })) 
+
+tib_allelic_E2226 <- tib_allelic_E2226 %>%
+  mutate(chr = factor(chr, levels = chromosomes)) %>%
+  drop_na(chr)
+
+``` 
+
+The start and end in the allele call txt file correspond to the 'region_start'  and 'region_end' in the integrations txt file (the ranges of the mapped reads).
+Join based on that. 
+```{r}
+joined_tib = tib_insilico_E2226 %>% 
+  mutate(cell_line = str_remove(sample, "_.*$")) %>%  #remove everything after the first _
+  filter(cell_line == "CRE6") %>%
+   mutate(region_start_num = case_when(region_start == "." ~ NA,
+                                      .default =as.numeric(region_start)),
+         region_end_num = case_when(region_end == "." ~ NA,
+                                      .default =as.numeric(region_end)),
+  ) %>%
+  left_join(tib_allelic_E2226, by = c("chr","sample", "region_start_num" = "start","region_end_num" = "end")) %>%
+  mutate(population = split_string(sample, "_", 2,3)) %>%
+  mutate(pool = split_string(sample, "_", 4)) 
+
+```
+
+In this experiment we sequenced the 10 tagmentation libraries from the one sample with separate indices. For all the analyses we merged these 10 libraries (because they actually correspond to one pool of cells). Do the same for the allele calling. 
+If an integration is found in multiple pools, I add up the 129S and CAST scores and determine the most likely allele based on that (if CAST>129S it is in the CAST allele, and vice versa, if equal the allele is ambiguous)
+```{r}
+joined_tib_ctrl_pooled = joined_tib %>%
+  filter(population == "non_sorted") %>%
+  group_by(chr, start, strand, cell_line, population) %>%
+  mutate(CAST = as.numeric(CAST),
+         `129S` = as.numeric(`129S`)) %>%
+  summarize(read_count = sum(read_count),
+            read_count_1 = sum(read_count_1),
+            read_count_2 = sum(read_count_2),
+            CAST_sum  = sum(CAST),
+            `129S_sum` = sum(`129S`),
+            N_Ambiguous = sum(call == "Ambiguous"),
+            N_CAST = sum(call == "CAST"),
+            N_129S = sum(call == "129S")
+            ) %>%
+  mutate(highest_score = case_when(CAST_sum > `129S_sum` ~  "CAST",
+                                   CAST_sum < `129S_sum` ~  "129S",
+                                   CAST_sum == `129S_sum` ~  "Ambiguous"
+                                   
+                                   ))
+
+
+```
+
+```{r ints_per_allele, fig.width= 3, fig.height=5 }
+myCols_alleles = c(`129S` = "tomato3", Ambiguous = 'lightgrey', CAST = "lightgrey")
+colScale_alleles <- scale_colour_manual(name = "allele", values = myCols_alleles, aesthetics = c("fill","colour"))
+
+
+joined_tib_ctrl_pooled %>% 
+  filter(chr == "chr3") %>% 
+  group_by(highest_score) %>%
+  summarize(N = n())%>%
+  mutate(prop_allele = N/sum(N)) %>%
+  dplyr::rename(allele = highest_score) %>%
+  ggplot(aes(x = allele, y = prop_allele, fill = allele)) + #by is a grouping factor to make the stat_prop work
+  geom_col() +
+  geom_text(aes(label = N), nudge_y =  0.02) +
+  scale_y_continuous(limits = c(0,NA), expand = expansion(mult = c(0, 0.05))) +
+  theme_classic() +
+  labs(x = "allele", y = "fraction of integrations") +
+  ggtitle("integrations on chr3") +
+  theme(legend.position = "none") +
+  colScale_alleles
+
+```
+
+
+# Show that mapping is not exhaustive
+
+```{r nonexhaustive_mapping, fig.width = 5, fig.height = 5}
+
+# Caculate which fraction of integrations has which read count
+tib_read_distr_fr = 
+  tib_E2226_comb %>% 
+  filter(cell_line == "CRE6" & population == "ctrl" & hopped) %>% 
+  group_by(read_count) %>% 
+  summarise(n_of_Int = n()) %>%
+  mutate(total_int = sum(n_of_Int),
+         fraction_of_int = n_of_Int/total_int)
+
+#combine all read counts from 8 and up into one category
+tib_read_distr_fr_grouped = tib_read_distr_fr %>%
+  mutate(read_count_grouped = case_when(read_count >= 8 ~ ">= 8",
+                                        .default = as.character(read_count))) %>%
+  mutate(read_count_grouped = factor(read_count_grouped, levels = c(as.character(1:8), ">= 8"))) %>%
+  group_by(read_count_grouped) %>%
+  summarize(n_of_Int = sum(n_of_Int),
+            fraction_of_int = sum(fraction_of_int))
+  
+#plot
+tib_read_distr_fr_grouped %>%
+  ggplot(aes(x = read_count_grouped, y = fraction_of_int)) +
+  geom_bar(stat = "identity") +
+  labs(x = "Unique reads per integration",
+       y = "Fraction of integrations") +
+  scale_y_continuous(limits = c(0,NA), expand = expansion(mult = c(0, 0.05)))+
+  geom_text(aes(label = n_of_Int), nudge_y =  0.02) +
+  theme_bw(base_size = 14)
+```
+
+
