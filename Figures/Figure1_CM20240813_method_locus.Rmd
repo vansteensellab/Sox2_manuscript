@@ -119,39 +119,6 @@ prange_plot = c(32643960, 36643960) #+/- 2MB from landing pad
 # Import data
 Now import directly from the table we prepared for GEO submission (contains all integration from E2226, already annotated)
 ```{r import_E2226_hopping_data}
-# 
-# 
-# MappingDataDir_E2226<- "/DATA/usr/m.eder/projects/Tn5_tagmentation/E2226/pipeline_results/mm10/hopping/insertions_ref"
-# 
-# # List all files
-# metadata_E2226 <- tibble(file = dir(MappingDataDir_E2226, 
-#                    recursive = T, full.names = T)) %>%
-#   # filter(grepl("insertions_ref", file)) %>%
-#   mutate(sample = str_remove(basename(file), "\\..*"))
-# 
-# metadata_E2226_CRE6ctrl = metadata_E2226 %>%
-#   filter(grepl("CRE6_non_sorted", sample))
-# 
-# # Load all files
-# tib_E2226 <- bind_rows(lapply(1:nrow(metadata_E2226_CRE6ctrl),
-#                         function(i) {
-#                           tmp <- read_tsv(metadata_E2226_CRE6ctrl$file[i],
-#                                           col_types = cols(
-#                                             .default = col_character(),
-#                                             start = col_double(),
-#                                             end = col_double(),
-#                                             # gap_concordance = col_double(),
-#                                             read_count = col_double(),
-#                                             mapq = col_double(),
-#                                             read_count_1 = col_double(),
-#                                             mapq_1 = col_character(),
-#                                             read_count_2 = col_double(),
-#                                             mapq_2 = col_character(),
-#                                             # sump = col_double(),
-#                                             # p_adj = col_double()
-#                                           )) %>%
-#                             mutate(sample = metadata_E2226_CRE6ctrl$sample[i])
-#                         })) 
 
 tib_E2226 <- read_tsv("/DATA/projects/Sox2/GEO_collection/Tagmentation/mapped_integrations_short_neutral_insert.txt")
 ```
