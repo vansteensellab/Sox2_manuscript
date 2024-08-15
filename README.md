@@ -5,7 +5,9 @@ In this study we investigated the Sox2 genomic locus in mESCs to better understa
 
 Repository guide
 This repository contains information about 
-- Tn5_tagmentation mapping (pipeline)
-- general functions including
-- ChIP-seq pipeline
-- R makrdowns to create paper figures
+- Tagmentation: Tn5_tagmentation mapping (pipeline)
+    - including all config files used for the data in the paper 
+- ChIP: CTCF ChIP-seq analysis (pipeline)
+- Analysis: various steps of preliminary analysis (between Tagmentation mapping and figure generation)
+- General functions: includes the calculation of expression score
+- Figures: R markdown files to create paper figures
