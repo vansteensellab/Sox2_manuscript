@@ -1,7 +1,7 @@
 ---
-title: "Figure1_CM20240813_method_locus"
+title: "Figure1_CM20240815_method_locus"
 author: "Mathias & Christine"
-date: "2024-08-12"
+date: "2024-08-15"
 output: 
   html_document:
     theme: journal #cerulean
@@ -16,13 +16,14 @@ output:
 #Goal:
 Create the figure panels describing the Sox2 locus and the proof-of-principle hopping experiment.
 
-
-#Outline: 
+## Outline: 
 - Plot RCMC triangle plot 
 - Load hopping data
 - Plot histogram integrations (stranded and unstranded)
 - Plot barplots cis/trans integrations
 
+## Notes for re-running
+To re-run this code, change the paths in 'File paths' to the correct location of datasets.
 
 # Set-up
 ##Libraries
@@ -75,7 +76,21 @@ opts_chunk$set(cache = T,
 pdf.options(useDingbats = FALSE)
 ```
 
+## File paths
+```{r}
+path_CTCF_sites = "/DATA/usr/v.franceschini/Workspaces/2024_01_MATHIAS_CTCF_PEAKS/VF240812_calling_CTCF_motifs_again/02_OUTPUTS/CTCF_sites/6764_2_ME_E2_CGATGT_S2_R1_001_peaks_motifs.bed"
 
+path_CRE6_ints = "/DATA/projects/Sox2/GEO_collection/Tagmentation/mapped_integrations_short_neutral_insert.txt"
+
+
+path_mm10_to_mm39 = "/DATA/usr/c.moene/projects/Hopping_Sox2_mTurq/general_analyses/region_capture_microC/mm10ToMm39.over.chain"
+
+path_RCMC_WT_file = "/DATA/usr/c.moene/projects/Hopping_Sox2_mTurq/general_analyses/region_capture_microC/CM20230718_GSM6281849_RCMC_BR1_merged_allCap_WT_mm39.merged.50.mcool"
+
+IntsInsilicoDir_E2226 <- "/DATA/usr/m.eder/projects/Tn5_tagmentation/E2226/pipeline_results/mm10/hopping/insertions/"
+AlleleMappingDataDir_E2226 <- "/DATA/usr/m.eder/projects/Tn5_tagmentation/E2226/pipeline_results/mm10/hopping/allelic_insertions/"
+
+```
 
 
 # Relevant annotations
@@ -99,11 +114,10 @@ landingPad_23 <- GRanges(seqnames = "chr3",
                     strand = "+")
 
 # new analysis (based on mapping to mm10 only)
-CTCF_mm10_new <- import.bed('/DATA/usr/v.franceschini/Workspaces/2024_01_MATHIAS_CTCF_PEAKS/VF240812_calling_CTCF_motifs_again/02_OUTPUTS/CTCF_sites/6764_2_ME_E2_CGATGT_S2_R1_001_peaks_motifs.bed')
+CTCF_mm10_new <- import.bed(path_CTCF_sites)
 
 #filtering:
 CTCF_mm10.chr3 <- CTCF_mm10_new[seqnames(CTCF_mm10_new)== 'chr3']
-# apparently also this dataset doesn't have the border CTCF (HOW? WHY?) Add it manually, again.
 # add the missing site after the SCR
 CTCF_mm10.chr3_extra = sort(c(CTCF_mm10.chr3,
                          GRanges(seqnames = "chr3",
@@ -120,7 +134,7 @@ prange_plot = c(32643960, 36643960) #+/- 2MB from landing pad
 Now import directly from the table we prepared for GEO submission (contains all integration from E2226, already annotated)
 ```{r import_E2226_hopping_data}
 
-tib_E2226 <- read_tsv("/DATA/projects/Sox2/GEO_collection/Tagmentation/mapped_integrations_short_neutral_insert.txt")
+tib_E2226 <- read_tsv(path_CRE6_ints)
 ```
 ## Modify tibble
 ```{r modify tibble}
@@ -172,35 +186,21 @@ kable(tib_E2226_comb %>% group_by(population, cell_line) %>% summarise(n = n()))
 ## LiftOver chains
 
 ```{r}
-# download.file('https://hgdownload.soe.ucsc.edu/goldenPath/mm9/liftOver/mm9ToMm10.over.chain.gz',
-#               "/DATA/usr/c.moene/projects/Hopping_Sox2_mTurq/general_analyses/region_capture_microC/mm9ToMm10.over.chain.gz")
 # download.file('https://hgdownload.soe.ucsc.edu/goldenPath/mm10/liftOver/mm10ToMm9.over.chain.gz',
 #               "/DATA/usr/c.moene/projects/Hopping_Sox2_mTurq/general_analyses/region_capture_microC/mm10ToMm9.over.chain.gz")
-# download.file('https://hgdownload.soe.ucsc.edu/goldenPath/mm39/liftOver/mm39ToMm10.over.chain.gz',
-#               "/DATA/usr/c.moene/projects/Hopping_Sox2_mTurq/general_analyses/region_capture_microC/mm39ToMm10.over.chain.gz")
-# download.file('https://hgdownload.soe.ucsc.edu/goldenPath/mm10/liftOver/mm10ToMm39.over.chain.gz',
-#               "/DATA/usr/c.moene/projects/Hopping_Sox2_mTurq/general_analyses/region_capture_microC/mm10ToMm39.over.chain.gz")
 
 # library(R.utils)
-# gunzip("/DATA/usr/c.moene/projects/Hopping_Sox2_mTurq/general_analyses/region_capture_microC/mm9ToMm10.over.chain.gz")
 # gunzip("/DATA/usr/c.moene/projects/Hopping_Sox2_mTurq/general_analyses/region_capture_microC/mm10ToMm9.over.chain.gz")
-# gunzip("/DATA/usr/c.moene/projects/Hopping_Sox2_mTurq/general_analyses/region_capture_microC/mm39ToMm10.over.chain.gz")
-# gunzip("/DATA/usr/c.moene/projects/Hopping_Sox2_mTurq/general_analyses/region_capture_microC/mm10ToMm39.over.chain.gz")
 
-chain_mm9_to_mm10 = import.chain("/DATA/usr/c.moene/projects/Hopping_Sox2_mTurq/general_analyses/region_capture_microC/mm9ToMm10.over.chain")
-chain_mm10_to_mm9 = import.chain("/DATA/usr/c.moene/projects/Hopping_Sox2_mTurq/general_analyses/region_capture_microC/mm10ToMm9.over.chain")
-chain_mm10_to_mm39 = import.chain("/DATA/usr/c.moene/projects/Hopping_Sox2_mTurq/general_analyses/region_capture_microC/mm10ToMm39.over.chain")
-chaim_mm39_to_mm10 = import.chain("/DATA/usr/c.moene/projects/Hopping_Sox2_mTurq/general_analyses/region_capture_microC/mm39ToMm10.over.chain")
-#landingPad_23_mm39= liftOver()
+chain_mm10_to_mm39 = import.chain(path_mm10_to_mm39)
 
 ```
 
 
 ## Load RCMC data
 ```{r}
-WT_file = "/DATA/usr/c.moene/projects/Hopping_Sox2_mTurq/general_analyses/region_capture_microC/CM20230718_GSM6281849_RCMC_BR1_merged_allCap_WT_mm39.merged.50.mcool"
 
-RCMC_1kb = load_contacts(signal_path = WT_file,
+RCMC_1kb = load_contacts(signal_path = path_RCMC_WT_file,
                       sample_name = 'WT',
                       resolution = 1000)
 ```
@@ -361,8 +361,6 @@ The hopping pipeline outputs a file with allele calls per integrations. These ar
 I reload the integrations, now on the in silico genome and the allele calls, and match them (for the CRE6 sample only) 
 
 ```{r}
-IntsInsilicoDir_E2226 <- "/DATA/usr/m.eder/projects/Tn5_tagmentation/E2226/pipeline_results/mm10/hopping/insertions/"
-
 # List all files
 metadata_insilico_E2226 <- tibble(file = dir(IntsInsilicoDir_E2226, 
                    recursive = T, full.names = T)) %>%
@@ -396,8 +394,6 @@ tib_insilico_E2226 <- tib_insilico_E2226 %>%
 
 
 # Load the allele specific integration data into R
-AlleleMappingDataDir_E2226 <- "/DATA/usr/m.eder/projects/Tn5_tagmentation/E2226/pipeline_results/mm10/hopping/allelic_insertions/"
-
 # List all files
 metadata_allelic_E2226 <- tibble(file = dir(AlleleMappingDataDir_E2226, 
                    recursive = T, full.names = T)) %>%
