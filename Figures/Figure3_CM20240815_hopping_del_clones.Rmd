@@ -1,0 +1,557 @@
+---
+title: "Figure3_CM20240815_reporter_only_hopping"
+author: "Mathias & Christine"
+date: "2024-08-15"
+output: 
+  html_document:
+    theme: journal #cerulean
+    highlight: monochrome
+    toc: true
+    toc_float: true
+    code_folding: show
+  editor_options:
+    chunk_output_type: console
+---
+
+
+
+#Goal
+Plot the hopping-induced deletion clones for figure 3, combining data from the three separate experiments.
+Also plot the FACS data from -116kb hopping replicate 1, where we see the mCh- mT high cells. 
+
+## Notes for re-running
+To re-run this code, change the paths in 'File paths' to the correct location of datasets.
+
+
+# Setup
+Load the libraries and set the parameters.
+
+```{r load_libraries}
+
+# Load dependencies
+library(GenomicRanges)
+library(rtracklayer)
+library(tidyverse)
+# library(dtplyr)
+library(dplyr)
+# library(tidyr)
+library(ggbeeswarm)
+library(ggplot2)
+library(Biostrings)
+library(stringr)
+library(readr)
+library(knitr)
+library(caTools)
+library(ggrastr)
+library(RColorBrewer)
+library(RcppRoll)
+library(plotly)
+library(readxl)
+library(ggpubr)
+library(ggpmisc)
+library(ggridges)
+import::from(flowCore, .except=c("filter")) #I don't load the whole flowCore and ggcyto libraries, because they overwrite dplyr's filter function :0
+import::from(ggcyto, 'fortify_fs')
+
+
+split_string <- function(vect,sep,N1,N2=N1){
+  library(stringr)
+  sapply(vect, function(X){
+    paste(str_split(X,sep)[[1]][N1:N2],collapse = sep)
+  },USE.NAMES = F)
+}
+```
+
+# Paths & parameters
+```{r paths_parameters}
+#datatag
+datetag = paste0("CM",format(Sys.time(), '%Y%m%d'))
+
+# Prepare output 
+output_dir <- paste0("/DATA/projects/Sox2/Figure_hopping_deletions/analysis_",datetag)
+dir.create(output_dir, showWarnings = FALSE)
+
+```
+
+```{r knits setup}
+
+library(knitr)
+opts_chunk$set(fig.width = 20, 
+               fig.height = 8, 
+               cache = T,
+               message = F, 
+               warning = F,
+               dev=c('png', 'pdf'), 
+               dpi = 600,
+               fig.path = file.path(output_dir, "/figures_deletion_clones/")) 
+pdf.options(useDingbats = FALSE)
+```
+
+## File paths
+```{r}
+path_CTCF_sites = "/DATA/usr/v.franceschini/Workspaces/2024_01_MATHIAS_CTCF_PEAKS/VF240812_calling_CTCF_motifs_again/02_OUTPUTS/CTCF_sites/6764_2_ME_E2_CGATGT_S2_R1_001_peaks_motifs.bed"
+
+#mapped and filtered integrations clones
+path_ints_clones_E2221 = "/DATA/usr/c.moene/projects/Hopping_Sox2_mTurq/E2344_mapping_clones/CM20231218_E2221_locations_all_mapped_clones.rds"
+path_ints_clones_E2344 = "/DATA/usr/c.moene/projects/Hopping_Sox2_mTurq/E2344_mapping_clones/CM20231214_E2344_locations_all_mapped_clones.rds"
+
+#flowcytometry data clones
+path_fcs_files_E2221 = '/DATA/usr/c.moene/projects/Hopping_Sox2_mTurq/E2217_FACS_clones/gated_fcs_files/plate_reader'
+path_fcs_files_E2259 = '/DATA/usr/m.eder/projects/FACS_data/E2259_MK03_23_34A_del_clones/fcs_for_R/ME20230518_E2259_gated'
+path_fcs_files_E2270 = '/DATA/usr/c.moene/projects/Hopping_Sox2_mTurq/E2270_hopping_mTurq_6gates_delDE/fcs_for_R/clones'
+
+path_link_well_clonename_E2221 = "/DATA/usr/c.moene/projects/Hopping_Sox2_mTurq/E2217_FACS_clones/CM20230309_E2204_link_wellindex_clonename.txt"
+
+#WT controls
+path_WT_ctrl_E2250 = "/DATA/usr/c.moene/projects/Hopping_Sox2_mTurq/E2250_CRISPR_Sox2_delBclones_pools/fcs_for_R/export_ME20230418_E2250_pools_WT_001_Single Cells.fcs"
+path_WT_ctrl_E2254 = "/DATA/usr/c.moene/projects/Hopping_Sox2_mTurq/E2254_CRISPR_delA_clones/fcs_for_R/export_ME20230426_E2254_WT_001_Single Cells.fcs"   
+```
+
+
+#Annotations
+```{r}
+
+# Location of enhancer / gene
+enhancer <- GRanges(seqnames = "chr3", 
+                    ranges = IRanges(start = 34753415,
+                                     end = 34766401),
+                    strand = "*")
+Sox2_gene <- GRanges(seqnames = "chr3", 
+                    ranges = IRanges(start = 34649995,
+                                     end = 34652461),
+                    strand = "+")
+
+
+landingPad_23 <- GRanges(seqnames = "chr3", 
+                    ranges = IRanges(start = 34643960,
+                                     end = 34643962),
+                    strand = "+")
+
+#CTCF sites based on our own mapping
+CTCF_mm10 <- import.bed(path_CTCF_sites)
+CTCF_mm10.chr3 <- CTCF_mm10[seqnames(CTCF_mm10)== 'chr3']
+# add the missing site after the SCR
+CTCF_mm10.chr3_extra = sort(c(CTCF_mm10.chr3,
+                         GRanges(seqnames = "chr3",
+                                 IRanges(start = 34772210, end = 34772210),
+                                 strand = "+")),
+                         ignore.strand = T)
+
+# Plotting ranges
+prange_zoom_paper = c(34.59E6, 34.83E6)
+
+# Color annotations
+## gene
+red = 'red'
+## SCR
+brown = "#ffb000"
+```
+
+
+# Import Data
+import mapping data
+```{r}
+all_mapped_clones_E2344 = readRDS(path_ints_clones_E2344)
+all_mapped_clones_E2221 = readRDS(path_ints_clones_E2221)
+```
+
+Load all FCS files
+```{r}
+##load the file names
+fcs_files_E2221 = dir(path_fcs_files_E2221, full.names = T)
+fcs_files_E2259 = dir(path_fcs_files_E2259, full.names = T)
+fcs_files_E2270 = dir(path_fcs_files_E2270, full.names = T)
+
+```
+
+## E2221
+```{r load_set_of_fcs_files}
+#wrangle sample names E2221
+names(fcs_files_E2221) = split_string(str_remove(fcs_files_E2221, '.*/'), "_", 2, 3)
+
+link_well_clonename_E2221 = 
+  read_tsv(path_link_well_clonename_E2221)
+
+
+pdata_tib_E2221 = tibble(files = fcs_files_E2221, Plate_well_new = names(fcs_files_E2221)) %>%
+  #link clone names to wells
+  left_join(link_well_clonename_E2221) %>%
+  mutate(sample = paste0("clone_", `clone name`, "_34")) %>%
+  #add mapping
+  left_join(all_mapped_clones_E2221) %>%
+  mutate(sample = str_replace(sample,"clone_", "clone_E2221_")) %>%
+  select(-c("clone name", "Well index culture plate")) 
+```
+
+## E2259
+Manually add the location of the 23_34A control, the fcs file from this control is already in the same folder as the deletion clones so will be automatically loaded.
+```{r}
+
+#wrangle sample names E2259
+names(fcs_files_E2259) = split_string(str_remove(fcs_files_E2259, '.*/'), "_", 2, 9)
+
+#Adding the control sample to the E2259
+info_ctrl_sample_E2259 = tibble(sample = "ctrl_E2259_23_34A_untreated", chr = "chr3",start = 34643961, #add info of the control sample
+                          strand = "+", cell_line = "23_34A", experiment = "E2259",
+                          expected_clonetype = "insertion", observed_clonetype_mapping = "insertion")
+
+pdata_tib_E2259 = tibble(files = fcs_files_E2259,  sample_name = names(fcs_files_E2259)) %>%
+  mutate(cell_line = case_when(grepl("23_34A", sample_name) ~ "23_34A",
+                               grepl("23_MK3_C1", sample_name) ~ "23_MK03",
+                               .default = "unclear")) %>%
+           filter(cell_line == "23_34A") %>%
+           mutate(clone_well = str_remove(sample_name, ".*_"),
+                  sample1 = paste0("clone_E2259_", cell_line, "_", clone_well),
+                  sample = case_when(sample_name == "ME20230518_E2259_23_34A_clones_23_34A_ctrl" ~ "ctrl_E2259_23_34A_untreated",
+                            .default = sample1)) %>%
+  left_join(all_mapped_clones_E2344) %>%
+  rows_update(info_ctrl_sample_E2259, by = "sample") 
+```
+
+## E2270
+```{r}
+#wrangle sample names E2270
+names(fcs_files_E2270) = split_string(str_remove(fcs_files_E2270, '.*/'), "_", 2, 6)
+
+info_ctrl_sample = tibble(sample = "ctrl_E2270_23_34A_untreated", chr = "chr3",start = 34643961, #add info of the control sample
+                          strand = "+", cell_line = "23_34A", experiment = "E2270",
+                          expected_clonetype = "insertion", observed_clonetype_mapping = "insertion")
+
+pdata_tib_E2270 = tibble(files = fcs_files_E2270,  sample_name = names(fcs_files_E2270)) %>%
+  mutate(sample1 = paste0("clone_E2270_23_34A_", split_string(sample_name, "_",5))) %>%
+  mutate(sample = case_when(sample_name == "23_34A_ctrl_C7_C07" ~ "ctrl_E2270_23_34A_untreated",
+                            .default = sample1)) %>%
+   left_join(all_mapped_clones_E2344) %>%
+   rows_update(info_ctrl_sample, by = "sample") 
+
+```
+
+## Load fcs
+```{r}
+  #combine tibbles
+pdata_tib_merged = bind_rows(pdata_tib_E2221, pdata_tib_E2259, pdata_tib_E2270) %>%
+  #select only clones that are mapped 
+  filter(!is.na(chr)) %>%
+  select(c(files, sample, chr, start, strand, read_count, n_reads_fw, n_reads_rv, cell_line, experiment, expected_clonetype,
+           observed_clonetype_mapping, start_del, end_del))
+
+pdata_merged_df = data.frame(pdata_tib_merged)
+rownames(pdata_merged_df) = pdata_merged_df$sample
+
+#load data
+flowset = flowCore::read.flowSet(files = pdata_merged_df$files, 
+                                       alter.names = T, truncate_max_range = F,
+                                 column.pattern = 'BL.B..530_30.A|YG.D..610_20.A|V.F..450_50.A|FSC.A|SSC.A')
+flowCore::sampleNames(flowset) = pdata_merged_df$sample
+pData(flowset)= pdata_merged_df
+
+total_cell_count = as.numeric(flowCore::keyword(flowset, "$TOT")[,'$TOT'])
+pData(flowset)$cell_count = total_cell_count
+
+flowset_fluo = flowset[,c('BL.B..530_30.A', 'YG.D..610_20.A', 'V.F..450_50.A')]
+colnames(flowset_fluo) = c("GFP", "mCherry", "mTurq")
+rm(flowset)
+```
+
+# Preprocessing
+## Get summary data
+calculate median
+```{r}
+#calculate central tendency
+median_exprs = t(sapply(1:length(flowset_fluo), function(i){
+  apply(exprs(flowset_fluo[[i]]),2,median)
+}))
+rownames(median_exprs) <- sampleNames(flowset_fluo)
+colnames(median_exprs) <- paste0("median_", colnames(exprs(flowset_fluo[[1]])))
+
+median_exprs = as_tibble( median_exprs, rownames = 'sample') %>% left_join(pdata_tib_merged)
+
+``` 
+
+## get close WT control
+These clonal data don't have a WT control. Based on the 23_34A fluorescence I picked a close WT control from a different experiment.
+I pick the closest controls:
+For E2204 (E2221) use E2250 (me20230418)
+For E2259 use E2254 (ME20230426)
+For E2270 use E2250
+
+```{r}
+flowset_WT_ctrls = flowCore::read.flowSet(files = c(path_WT_ctrl_E2250, path_WT_ctrl_E2254), alter.names = T, truncate_max_range = F)[,c('BL.B..530_30.A', 'YG.D..610_20.A', 'V.F..450_50.A', 'FSC.A', 'SSC.A')]
+colnames(flowset_WT_ctrls) = c("GFP", "mCherry", "mTurq",'FSC', 'SSC')
+
+autofluo_est = bind_rows(lapply(1:2, function(i){
+  tibble(GFP_WT = median(exprs(flowset_WT_ctrls[[i]])[,'GFP']),
+         mCherry_WT = median(exprs(flowset_WT_ctrls[[i]])[,'mCherry']),
+         mTurq_WT = median(exprs(flowset_WT_ctrls[[i]])[,'mTurq']))
+})) %>%
+  mutate(autofluo_experiment =  c("E2250", "E2254"),
+         date = c("me20230418", "ME20230426"))
+
+```
+
+## Normalize
+
+```{r}
+
+fcs_tib_clones = median_exprs %>%
+  mutate(hopped = start != 34643961) %>%
+  #link the estimated autofluorescence
+  mutate(autofluo_experiment = case_when(experiment %in% c("E2204", "E2270") ~  "E2250",
+                                         experiment == "E2259" ~ "E2254")) %>%
+  left_join(autofluo_est) %>%
+  #subtract autofluorescence  
+  mutate(median_mTurq_cor = median_mTurq - mTurq_WT,
+         median_mCherry_cor = median_mCherry - mCherry_WT,
+         median_GFP_cor = median_GFP - GFP_WT) %>%
+  #normalize to GFP
+  mutate(mTurq_norm = median_mTurq_cor / median_GFP_cor,
+         mCherry_norm = median_mCherry_cor / median_GFP_cor)
+
+
+#normalize to 23_34A (to compare between measurement days)
+standard_tib = fcs_tib_clones %>%
+  filter(! hopped) %>%
+  group_by(experiment, start) %>%
+  summarize(
+    #GFP normalized
+    mTurq_norm_standard = mean(mTurq_norm),
+    mCherry_norm_standard = mean(mCherry_norm),
+    #not GFP normalized
+    GFP_standard = mean(median_GFP_cor),
+    mCherry_standard = mean(median_mCherry_cor)) %>%
+  select(-start)
+
+
+expression_tib_cor = fcs_tib_clones %>%
+  left_join(standard_tib) %>%
+  mutate(
+    #GFP normalized
+    rel_norm_mTurq = mTurq_norm / mTurq_norm_standard,
+    rel_norm_mCherry = mCherry_norm / mCherry_norm_standard,
+    #not GFP normalized
+    rel_GFP_cor = median_GFP_cor / GFP_standard,
+    rel_mCherry_cor = median_mCherry_cor / mCherry_standard
+    )
+
+``` 
+
+## Summarize per location
+```{r}
+clones_by_pos = expression_tib_cor %>%
+  group_by(experiment, chr, start, strand, cell_line, observed_clonetype_mapping, start_del, end_del) %>%
+  summarize(
+    #GFP normalized
+    rel_mTurq_norm_mean = mean(rel_norm_mTurq),
+    rel_mCherry_norm_mean = mean(rel_norm_mCherry),
+    #not GFP normalized
+    rel_GFP_cor_mean = mean(rel_GFP_cor),
+    rel_mCherry_cor_mean = mean(rel_mCherry_cor)
+    )
+
+```
+
+
+# Plot range of deletions
+
+```{r number_of_clones}
+expression_tib_cor %>% filter(observed_clonetype_mapping == "deletion") %>%nrow()
+
+``` 
+
+```{r unique_locations}
+del_locations = # just ordered by size, unique locations
+  filter(clones_by_pos, start >= prange_zoom_paper[1] & start <= prange_zoom_paper[2] & 
+           observed_clonetype_mapping == "deletion") %>%
+  distinct(experiment, end_del) %>%  
+  ungroup()%>%
+  mutate(end_del_exp =  paste0(end_del, "_", experiment)) %>%
+  #order the factor from high to low so it looks nice in the plot (y axis is built from bottom to top)
+  mutate(end_del_exp_fct = as_factor(end_del_exp)) %>%
+  mutate(end_del_exp_fct = reorder(end_del_exp_fct, -end_del)) 
+nrow(del_locations)
+```
+There are 48 unique deletion events (unique deletions or from separate experiments)
+
+```{r shorted_largest_del}
+del_locations %>%
+  mutate(del_length = end_del - start_del) %>%
+  pull(del_length) %>% summary()
+
+```
+Shortest deletion: 8395 bp, longest 113294 
+
+```{r plot_range_deletions_c, fig.width=6, fig.height=4}
+
+## plot
+plot_range_dels = ggplot(del_locations, aes(x = end_del, y = end_del_exp_fct)) + 
+  # annotate enhancer
+  annotate("rect", xmin = start(enhancer), xmax = end(enhancer), ymin = -Inf, ymax = Inf, alpha = .2, fill = brown) +
+  geom_vline(xintercept = c(start(enhancer), end(enhancer)), col = brown) +
+  # annotate gene
+  annotate("rect", xmin = start(Sox2_gene), xmax = end(Sox2_gene), ymin = -Inf, ymax = Inf, alpha = .2, fill = red) +
+  geom_vline(xintercept = c(start(Sox2_gene), end(Sox2_gene)), col = red) +
+  #annotate landing pad
+  # geom_vline(xintercept = start(landingPad_23), col = 'darkgrey') +
+  # #annotate CTCF sites
+  # geom_vline(xintercept = start(CTCF_mm10.chr3_extra), col = 'darkgrey', lty = '11') +
+  
+  #plot data
+  geom_segment(aes(x = 34.63E6, xend = start_del,
+                   yend = end_del_exp_fct),
+               col = 'grey30') +
+  geom_segment(aes(x = end_del, xend =  34.775E6,
+                   yend = end_del_exp_fct),
+               col = 'grey30') +
+    geom_segment(aes(x = start_del, xend = end_del,
+                   yend = end_del_exp_fct),
+               col = 'grey80', linetype = 'dotted') +
+  geom_point(size = 1, col = '#0077BB') +
+ 
+  
+  #layout
+  labs(x='Genomic coordinate (Mb)') +
+  theme_classic(base_size = 16) +
+  theme(legend.position = "bottom",
+        axis.title.y = element_blank(),
+        axis.text.y = element_blank(),
+        axis.ticks.y  = element_blank(),
+        axis.line.y = element_blank()) +
+  
+  scale_x_continuous(breaks = scales::pretty_breaks(n = 4),
+                     labels = scales::unit_format(scale = 1E-6, accuracy = 0.01, unit=NULL),
+                     limits=c(34.63E6, 34.775E6),
+                     expand = c(0,0)) 
+plot_range_dels
+```
+
+
+# Plot expression deletions
+
+```{r rel_mTurq_del_clones, fig.width = 6, fig.height = 4}
+
+colScale_ins_del =  scale_color_manual(name = "observed_clonetype_mapping",
+                                       values  = c(insertion = "grey60", deletion = '#0077BB'),
+                                       aesthetics = c("col","fill")) 
+
+plot_expr_dels = ggplot(clones_by_pos, aes(x = start, y = rel_mTurq_norm_mean, col = observed_clonetype_mapping)) +
+  # annotate enhancer
+  annotate("rect", xmin = start(enhancer), xmax = end(enhancer), ymin = -Inf, ymax = Inf, alpha = .2, fill = brown) +
+  geom_vline(xintercept = c(start(enhancer), end(enhancer)), col = brown) +
+  # annotate gene
+  annotate("rect", xmin = start(Sox2_gene), xmax = end(Sox2_gene), ymin = -Inf, ymax = Inf, alpha = .2, fill = red) +
+  geom_vline(xintercept = c(start(Sox2_gene), end(Sox2_gene)), col = red) +
+  #annotate landing pad
+  geom_vline(xintercept = start(landingPad_23), col = 'darkgrey') +
+  # #annotate CTCF sites
+  # geom_vline(xintercept = start(CTCF_mm10.chr3_extra), col = 'darkgrey', lty = '11') +
+ 
+  #indicate scaled expression of 1 (23_34A)
+  geom_hline(yintercept = 1, linetype = 'dashed')+ 
+  
+  #layout
+  labs(x='Genomic coordinate (Mb)', y = 'relative reporter \n(mTurq) expression') +
+  theme_classic(base_size = 16) +
+  theme(legend.position = "none") +
+  scale_x_continuous(breaks = scales::pretty_breaks(n = 4),
+                     labels = scales::unit_format(scale = 1E-6, accuracy = 0.01, unit=NULL),
+                     limits=c(34.63E6, 34.775E6),
+                     expand = c(0,0)
+                     ) +
+  scale_y_continuous(limits=c(0,NA),
+                     expand = expansion(mult = c(0,0.05))) +
+  
+  #points
+  geom_point( )+
+  colScale_ins_del
+plot_expr_dels
+
+```
+
+```{r BC_del_clones_combined, fig.width = 10, fig.height = 4}
+
+cowplot::plot_grid(plotlist = list(plot_range_dels, plot_expr_dels), 
+                   align = 'h', axis = c('tb'), nrow = 1, rel_widths =  c(1, 1.5))
+```
+## Numbers expression value
+Maximum expression deletions:
+
+```{r}
+clones_by_pos %>% filter(observed_clonetype_mapping == "deletion") %>% pull(rel_mTurq_norm_mean) %>% max()
+```
+
+Difference clone ins dels
+Within 20kb of SCR (not including inside the SCR!)
+```{r}
+clones_by_pos %>% filter( chr == "chr3" & start >= start(enhancer)-20E3 & start <= start(enhancer)) %>%
+  group_by(observed_clonetype_mapping) %>%
+  summarize(mean_mT = mean(rel_mTurq_norm_mean)) %>%
+  pivot_wider(names_from= 'observed_clonetype_mapping', values_from = 'mean_mT') %>%
+  mutate(deletion / insertion)
+
+```
+
+All clones overlapping the insertion range (wihtin 23.4kb)
+
+```{r}
+clones_by_pos %>% filter( chr == "chr3" & start >= 34.73E6 & start <= start(enhancer)) %>%
+  group_by(observed_clonetype_mapping) %>%
+  summarize(mean_mT = mean(rel_mTurq_norm_mean)) %>%
+  pivot_wider(names_from= 'observed_clonetype_mapping', values_from = 'mean_mT') %>%
+  mutate(deletion / insertion)
+
+```
+Correlation expression position:
+
+```{r}
+clones_by_pos_dels = clones_by_pos %>% filter(observed_clonetype_mapping == "deletion") %>%
+  mutate(dist_SCR = start(enhancer) - start)
+
+cor.test( clones_by_pos_dels$dist_SCR, clones_by_pos_dels$rel_mTurq_norm_mean, method = "spearman")
+```
+
+# To pick clones for PCR/Sanger confirmation
+I picked a couple of clones with different deletions, from E2204 (so I can use lysates from those plates), for Sanger confirmation.
+
+Here, plot the locations of the insertion/deletions and the SNPs.
+```{r clones_Sanger_confirm, fig.width = 4, fig.height = 2}
+ggplot(filter(expression_tib_cor, sample %in% c('clone_E2221_1-54_34', 'clone_E2221_1-64_34', 'clone_E2221_3-55_34') ),
+               aes(x = start, y = rel_norm_mTurq, col = observed_clonetype_mapping,
+                   lab = sample)) +
+  # annotate enhancer
+  annotate("rect", xmin = start(enhancer), xmax = end(enhancer), ymin = -Inf, ymax = Inf, alpha = .2, fill = brown) +
+  geom_vline(xintercept = c(start(enhancer), end(enhancer)), col = brown) +
+  # annotate gene
+  annotate("rect", xmin = start(Sox2_gene), xmax = end(Sox2_gene), ymin = -Inf, ymax = Inf, alpha = .2, fill = red) +
+  geom_vline(xintercept = c(start(Sox2_gene), end(Sox2_gene)), col = red) +
+  #annotate landing pad
+  geom_vline(xintercept = start(landingPad_23), col = 'darkgrey') +
+  
+  #annotate SNPs
+  geom_vline(xintercept = c(34691039, 34733400, 34752890), col = 'darkgreen', linewidth = 0.8, lty = 'dashed') +
+ 
+  #indicate scaled expression of 1 (23_34A)
+  geom_hline(yintercept = 1, linetype = 'dashed')+ 
+  
+  #layout
+  labs(x='Genomic coordinate (Mb)', y = 'relative mTurq') +
+  theme_classic(base_size = 16) +
+  theme(legend.position = "none") +
+  scale_x_continuous(breaks = scales::pretty_breaks(n = 4),
+                     labels = scales::unit_format(scale = 1E-6, accuracy = 0.01, unit=NULL),
+                     limits=c(34.63E6, 34.775E6),
+                     expand = c(0,0)
+                     ) +
+  scale_y_continuous(limits=c(0,NA),
+                     expand = expansion(mult = c(0,0.05))) +
+  
+  #points
+  geom_segment(data = filter(expression_tib_cor, sample %in% c('clone_E2221_1-54_34', 'clone_E2221_1-64_34')),
+               aes(x = start_del, xend = end_del, yend = rel_norm_mTurq), col  = 'darkgrey')+
+  geom_point(size = 2) +
+  
+  colScale_ins_del
+  
+
+```
+
+
