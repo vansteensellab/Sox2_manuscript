@@ -1,0 +1,747 @@
+---
+title:  "CM20231212_E2344_map_clone_locations"
+author: "Christine Moene"
+date: "`r format(Sys.time(), '%Y-%m-%d')`"
+output: 
+  html_document:
+    theme: journal #cerulean
+    highlight: monochrome
+    toc: true
+    toc_float: true
+    code_folding: show
+  editor_options:
+    chunk_output_type: console
+---
+
+# Goal
+First analysis of the tagmentation data from E2344
+We want to know:
+ - is there one or multiple SB integrations?
+ - is there evidence of a deletion (one integration only Fw mapped and the other only Rv mapped, on the same strand)
+ - where are the integrations
+ 
+
+# Set-up
+Load the libraries and set the parameters.
+
+```{r load_libraries}
+
+# Load dependencies
+library(GenomicRanges)
+library(rtracklayer)
+library(tidyverse)
+library(dtplyr)
+library(dplyr)
+library(tidyr)
+library(ggbeeswarm)
+library(ggplot2)
+library(Biostrings)
+library(stringr)
+library(readr)
+library(knitr)
+library(RColorBrewer)
+library(RcppRoll)
+library(readxl)
+library(plotly)
+
+split_string <- function(vect,sep,N1,N2=N1){
+  library(stringr)
+  sapply(vect, function(X){
+    paste(str_split(X,sep)[[1]][N1:N2],collapse = sep)
+  },USE.NAMES = F)
+}
+```
+
+
+# Paths & parameters
+
+```{r paths_parameters}
+#datatag
+datetag = paste0("CM",format(Sys.time(), '%Y%m%d'))
+
+# Prepare output 
+output_dir <- paste0("/DATA/usr/c.moene/projects/Hopping_Sox2_mTurq/E2344_mapping_clones/analysis_E2344_",datetag)
+dir.create(output_dir, showWarnings = FALSE)
+
+```
+
+```{r knits setup}
+
+library(knitr)
+opts_chunk$set(fig.width = 20, fig.height = 8, cache = T,
+               message = F, warning = F,
+               dev=c('png', 'pdf'), 
+               fig.path = file.path(output_dir, "figures/")) 
+pdf.options(useDingbats = FALSE)
+```
+
+
+```{r element_coordinates}
+
+# Location of enhancer / gene
+enhancer <- GRanges(seqnames = "chr3", 
+                    ranges = IRanges(start = 34753415,
+                                     end = 34766401),
+                    strand = "*")
+
+# SCR sequence used by Luca Giorgetti study
+enhancer_giorgetti <- GRanges(seqnames = "chr3", 
+                    ranges = IRanges(start = 34757649,
+                                     end = 34762535),
+                    strand = "*")
+
+#gene based on mm10, ucsc browser, RefSeq annotation
+gene <- GRanges(seqnames = "chr3", 
+                    ranges = IRanges(start = 34650405,
+                                     end = 34652461),
+                    strand = "+")
+
+
+landingPad_23 <- GRanges(seqnames = "chr3", 
+                    ranges = IRanges(start = 34643960,
+                                     end = 34643962),
+                    strand = "+")
+
+landingPad_8 <- GRanges(seqnames = "chr3", 
+                    ranges = IRanges(start = 34721183,
+                                     end = 34721184),
+                    strand = "+")
+
+# CTCF sites
+CTCF_mm10 <- import.bed('/DATA/usr/m.eder/projects/Tn5_tagmentation/CTCF_mm10.bed')
+# Filter only for sites on chr3
+CTCF_mm10.chr3 <- CTCF_mm10[seqnames(CTCF_mm10)== 'chr3']
+
+
+# regions of interest
+upstr_of_LP23 = GRanges(seqnames = "chr3",
+                    ranges = IRanges(start = 33643950,
+                                     end = 34643950), strand = "*") #1Mb upstream of the landingPad (10 bp margin)
+LP23_Sox2 = GRanges(seqnames = "chr3",
+                    ranges = IRanges(start = 34643972,
+                                     end = 34649985), strand="*") #6 kb from LP to Sox2 (10 bp margin)
+
+Sox2_enhancer = GRanges(seqnames = "chr3",
+                    ranges = IRanges(start = 34652471,
+                                     end = 34753405), strand="*") #~100kb from Sox2 to the SCR 
+
+downstream_of_SCR_wide = GRanges(seqnames = "chr3", 
+                    ranges = IRanges(start = 34766411,
+                                     end = 35766411), strand = "*") #1Mb downstream of the SCR (to check for deletion artifacts)
+
+region_granges =  c(upstr_of_LP23, LP23_Sox2, Sox2_enhancer, downstream_of_SCR_wide, gene, enhancer)
+names(region_granges) = c("upstr", "LP_to_Sox2", "Sox2_to_enhancer", "downstream_of_SCR", "inside_Sox2","inside_SCR")
+
+prange_zoom = c(34500000 , 35000000)
+```
+
+# Import data
+
+```{r}
+MappingDataDir_E2344<- "/DATA/usr/c.moene/projects/Hopping_Sox2_mTurq/E2344_mapping_clones/pipeline_output/mm10/hopping/insertions_ref"
+
+# List all files
+metadata_E2344 <- tibble(file = dir(MappingDataDir_E2344, 
+                   recursive = T, full.names = T)) %>%
+  # filter(grepl("insertions_ref", file)) %>%
+  mutate(sample = str_remove(basename(file), "\\..*")) %>%
+  #FILTER OUT CONTROL POOLS (they are not clones and not relevant here, they are from E2345)
+  filter(!grepl("_ctrl", sample))
+
+# Load all files
+tib_clones <- bind_rows(lapply(1:nrow(metadata_E2344),
+                        function(i) {
+                          tmp <- read_tsv(metadata_E2344$file[i],
+                                          col_types = cols(
+                                            .default = col_character(),
+                                            start = col_double(),
+                                            end = col_double(),
+                                            # gap_concordance = col_double(),
+                                            read_count = col_double(),
+                                            mapq = col_double(),
+                                            read_count_1 = col_double(),
+                                            mapq_1 = col_character(),
+                                            read_count_2 = col_double(),
+                                            mapq_2 = col_character(),
+                                            # sump = col_double(),
+                                            # p_adj = col_double()
+                                          )) %>%
+                            mutate(sample = metadata_E2344$sample[i])
+                        })) 
+
+```
+
+
+```{r cleaning_merged_tib}
+
+# Change mapping quality to numberic
+tib_clones <- tib_clones %>%
+  mutate(mapq_1 = as.numeric(mapq_1),
+         mapq_2 = as.numeric(mapq_2),
+         mapq_1 = replace_na(mapq_1, 0),
+         mapq_2 = replace_na(mapq_2, 0)) %>%
+  select(-name)
+
+# Factors for chr
+chromosomes <- paste0("chr", c(1:19, "X"))
+
+tib_clones <- tib_clones %>%
+  mutate(chr = factor(chr, levels = chromosomes)) %>%
+  drop_na(chr)
+
+tib_clones <- filter(tib_clones, mapq>=10) 
+
+# saveRDS(tib_clones, paste0("/DATA/usr/c.moene/projects/Hopping_Sox2_mTurq/E2344_mapping_clones//",datetag,"_E2344_complete_tib.rds"))
+```
+
+
+very quickly: how many clones do we map something:
+```{r}
+filter(tib_clones, read_count >= 10) %>% pull(sample) %>% unique() %>% length()
+
+tib_clones %>% pull(sample) %>% unique() %>% length()
+```
+
+In 91 out of 93 samples we have at least 1 location with 10 or more reads
+
+
+Annotate the putative integrations (only fw, only rv or both)
+```{r}
+tib_clones_annot = tib_clones %>%
+  mutate(mapped_arms = case_when(read_count_1 == 0 ~ "rv_only",
+                                 read_count_2 == 0 ~ "fw_only",
+                                 read_count_1 > 0 & read_count_2 > 0 ~ "both_arms"),
+         sorted_plate = split_string(sample, "_", 2,4)) %>%
+  mutate(cell_line = split_string(sample, "_", 3, 4),
+         experiment = split_string(sample, "_", 2),
+         well = split_string(sample, "_", 5),
+         row = substr(well, 1, 1),  
+         expected_clonetype = case_when(experiment == "E2270" ~ "deletion",
+                                        experiment == "E2259" & cell_line == "23_34A" ~ "deletion",
+                                        experiment == "E2259" & cell_line == "23_MK03" & row %in% c("A","B","C","D") ~ "deletion",
+                                        experiment == "E2259" & cell_line == "23_MK03" & row %in% c("E","F","G","H") ~ "insertion"))
+
+```
+
+# Overview plots
+Make a quick plot of the found integrations:
+
+```{r}
+p1 = tib_clones_annot %>% 
+  filter(read_count >= 10) %>% #very simple filter
+  filter(start >= prange_zoom[1] & start <= prange_zoom[2]) %>%
+  ggplot(aes(x = start, y = read_count, col = cell_line, txt1 = sample)) +
+  facet_grid(expected_clonetype~mapped_arms) +
+  # annotate enhancer
+  annotate("rect", xmin = start(enhancer), xmax = end(enhancer), ymin = -Inf, ymax = Inf, alpha = .2, fill = 'purple') +
+  geom_vline(xintercept = c(start(enhancer), end(enhancer)), col = 'purple') +
+  # annotate gene
+  annotate("rect", xmin = start(gene), xmax = end(gene), ymin = -Inf, ymax = Inf, alpha = .2, fill = 'red') +
+  geom_vline(xintercept = c(start(gene), end(gene)), col = 'red') +
+  #annotate landing pad
+  geom_vline(xintercept = start(landingPad_23), col = 'darkgrey') +
+      #annotate CTCF sites
+  geom_vline(xintercept = start(CTCF_mm10.chr3), col = 'darkgrey', linetype = 'dotted') + 
+  #extra CTCF site that is not in the annotation
+  geom_vline(xintercept = 34772210, col = 'darkgrey', linetype = "dotted") +
+
+  geom_point() +
+    
+  labs(x='Genomic coordinate (Mb)',y='number of reads') + 
+    #layout:
+  theme_classic(base_size = 16) +
+  theme(legend.position = "none") +
+  scale_x_continuous(breaks = scales::pretty_breaks(n = 6), labels = scales::unit_format(scale = 1E-6, accuracy = 0.1, unit=NULL),
+                     limits=prange_zoom) +
+  ggtitle("all  clones") 
+p1
+ggplotly(p1)
+
+```
+
+
+# Consensus location per clone
+Step one: determine the most likely integration(s) per clone.
+Here I want to 'believe' the top location mapped fw, the top location mapped rv and any locations that are somewhat close to this in read count.
+
+```{r}
+#within 5 fold
+tib_clones_annot_filt1 = tib_clones_annot %>% 
+  filter(read_count >= 10) %>%
+  group_by(sample) %>%
+  mutate(ratio_reads_1 = read_count_1 / max(read_count_1), #ratio with the top hit of that orientation, top hit automatically has a ratio of 1 
+         ratio_reads_2 = read_count_2 / max(read_count_2)) %>%
+  filter(ratio_reads_1 >= 0.2 | ratio_reads_2 >= 0.2) #take anything within 5 fold (ratio 0.2) of the top hit
+
+# saveRDS(tib_clones_annot_filt1, "/DATA/usr/c.moene/projects/Hopping_Sox2_mTurq/E2344_mapping_clones/CM20240116_E2344_tib_clones_annot_filt1.rds")
+
+tib_clones_annot_filt2 = filter(tib_clones_annot_filt1, !(chr=="chr16" & start == 4332807))  %>% #remove the off-target on chr16
+  filter(!(chr=="chr11" & start == 101514610)) #remove off-target on chr11
+
+```
+
+
+
+Let's think about this again...
+A good deletion clone has: 
+ - one loc with ratio 1 on fw_only 
+ - one loc with ratio 1 on rv_only
+ - no other hits
+ 
+A good insertion clone has:
+ - one loc with ratio 1 on both arms
+ - no other hits
+
+```{r manually_check_hits}
+tib_clones_annot_filt3 = tib_clones_annot_filt2 %>% 
+  group_by(sample, expected_clonetype) %>%
+    #try to deal with all deletion clones that have a couple of fw reads in the home location
+  mutate(mapped_arms_corrected = case_when(mapped_arms == "both_arms" & ratio_reads_1 < 0.1 ~ "rv_mostly",
+                                           mapped_arms == "both_arms" & ratio_reads_2 < 0.1 ~ "fw_mostly",
+                                           .default = mapped_arms
+                                           ))
+
+classify_for_checking = tib_clones_annot_filt3 %>%
+  summarize(n_hit_locations = n(),
+            n_both_arms = sum(mapped_arms_corrected == "both_arms"),
+            n_fw_only = sum(mapped_arms_corrected == "fw_only") + sum(mapped_arms_corrected == "fw_mostly"),
+            n_rv_only = sum(mapped_arms_corrected == "rv_only") + sum(mapped_arms_corrected == "rv_mostly")
+            ) %>%
+  mutate(confident_clone = case_when(n_hit_locations == 1 & n_both_arms == 1 ~ "confident_insertion",
+                                     n_hit_locations == 2 & n_fw_only == 1 & n_rv_only == 1 ~ "confident_deletion",
+                                     .default = "manual_check"))
+
+manual_check_clones = classify_for_checking %>% filter(confident_clone == "manual_check") %>% pull(sample)
+
+tib_clones_annot_filt3 %>% filter(sample %in% manual_check_clones)
+
+
+remove_bad_clones = c("clone_E2259_23_MK03_A10",
+                      "clone_E2259_23_MK03_B3",
+                         "clone_E2259_23_MK03_C5",
+                         "clone_E2259_23_MK03_E4",
+                         "clone_E2259_23_MK03_E10",
+                         "clone_E2259_23_MK03_F10",
+                      "clone_E2259_23_MK03_G1",
+                         "clone_E2259_23_MK03_G7"
+                      )
+
+tib_clones_annot_filt4 = tib_clones_annot_filt3 %>%
+  #remove locations that are bleedthrough from different clones
+  filter(!(sample == "clone_E2259_23_MK03_A9" & start == 34694607)) %>% 
+  filter(!(sample == "clone_E2259_23_MK03_G5" & start == 34726026)) %>% 
+  filter(!(sample == "clone_E2259_23_MK03_G5" & start == 34726026)) %>%
+  filter(!(sample == "clone_E2259_23_MK03_E2" & start == 34726022)) %>% #remove 2nd location that is just 4bp shifted and probably a mis-mappnig
+  filter(! sample %in% remove_bad_clones)
+
+tib_clones_annot_filt4 %>% summarize(N = n()) %>% filter(expected_clonetype == "deletion" & N != 2)
+tib_clones_annot_filt4 %>% summarize(N = n()) %>% filter(expected_clonetype == "insertion" & N != 1)
+
+#discard clones that we do not know the full location of (e.g. only have reads from home location)
+tib_clones_annot_filt5 = tib_clones_annot_filt4 %>%
+  filter(!(sample %in% c("clone_E2270_23_34A_B9", "clone_E2270_23_34A_D1", "clone_E2270_23_34A_D4", "clone_E2270_23_34A_D5")))
+
+```
+clone_E2259_23_MK03_A9: Secondary location (34694607) is most likely read bleed-through from clone_E2259_23_MK03_C1. These clones had the same index#2 (i5) and C1 clearly only has the location 34694607. Keep.
+clone_E2259_23_MK03_A10: no fw mapping reads found, unclear what this clone is. Discard.
+clone_E2259_23_MK03_B2: Just some extra reads from home location, clearly a good deletion clone. Keep.
+clone_E2259_23_MK03_B3: most likely double clone (unhopped and hopped to 34650745). Discard
+clone_E2259_23_MK03_B5: Just some extra reads from home location, clearly a good deletion clone. Keep.
+clone_E2259_23_MK03_C5: has an insertion with two mapped arms, but also a lot of rv only reads in the home location, and was sorted originally as a deletion clone. Strange situation, discard.
+clone_E2259_23_MK03_C7: Just some extra reads from home location, clearly a good deletion clone. Keep.
+clone_E2259_23_MK03_E2: secondary location (rv only in 34726022 ) has quite low number of reads (just 20% of top hit) and is just 4bp away from top hit (34726026), so I assume 34726026 is correct and some reads are just a bit off. Keep
+clone_E2259_23_MK03_E4: two integrations, one in the home location and one in 34751464. Discard
+clone_E2259_23_MK03_E10: has an insertion with two mapped arms, but also a lot of rv only reads in the home location. Was sorted as an insertion clone. Strange situation, discard.
+clone_E2259_23_MK03_F10: two integrations, one in the home location and one in 34755020. Discard.
+clone_E2259_23_MK03_G1: two integrations, one in the home location and one in 34759116. Discard.
+clone_E2259_23_MK03_G5: seems to have a real deletion, from home location to 34686010, although the clone was originally sorted as an insertion clone. The secondary location (34726026) is bleed through from clone_E2259_23_MK03_E2  (which shares an index#1 / i7 with this clone). Keep.
+clone_E2259_23_MK03_G7: very few rv mapping reads in either location, but based on the mapping i don't know whether it is unhopped or double clone or something else. Discard.
+clone_E2270_23_34A_A2: Just some extra reads from home location, clearly a good deletion clone. Keep.
+clone_E2270_23_34A_C5: Just some extra reads from home location, clearly a good deletion clone. Keep.
+clone_E2270_23_34A_C10: Just some extra reads from home location, clearly a good deletion clone. Keep.
+clone_E2270_23_34A_C11: Just some extra reads from home location, clearly a good deletion clone. Keep.
+
+
+clone_E2270_23_34A_B9: has 2 confident mapped arms, maybe insertion clone? Keep
+clone_E2270_23_34A_D1: only has one arm mapped in the home location. Discard.
+clone_E2270_23_34A_D4: only has some reads in the home location. Discard.
+clone_E2270_23_34A_D5: only has some reads in the home location. Discard.
+
+
+```{r location_per_clone}
+tib_clones_annot_filt6 = tib_clones_annot_filt5 %>%
+  mutate(n_hit_locations = n(),
+            n_both_arms = sum(mapped_arms_corrected == "both_arms"),
+            n_fw_only = sum(mapped_arms_corrected == "fw_only") + sum(mapped_arms_corrected == "fw_mostly"),
+            n_rv_only = sum(mapped_arms_corrected == "rv_only") + sum(mapped_arms_corrected == "rv_mostly")
+            ) %>%
+  mutate(observed_clonetype_mapping = case_when(n_fw_only == 1 & n_rv_only == 1 ~ "deletion",
+                                                n_both_arms == 1 & n_hit_locations == 1 ~ "insertion",
+                                                #mark the clones I manually checked/confirmed
+                                                sample %in% c("clone_E2259_23_MK03_B2", "clone_E2259_23_MK03_B5", "clone_E2259_23_MK03_C7",
+                                                              "clone_E2270_23_34A_A2", "clone_E2270_23_34A_C5", "clone_E2270_23_34A_C10", "clone_E2270_23_34A_C11") ~ "deletion",
+                                                .default = "unclear"))
+
+
+deletion_clones_tib = tib_clones_annot_filt6 %>%
+  filter(observed_clonetype_mapping == "deletion") %>%
+  group_by(chr, sample, sorted_plate, cell_line, experiment, expected_clonetype, observed_clonetype_mapping) %>%
+  mutate(read_count_fw = case_when(mapped_arms_corrected %in% c("fw_only", "fw_mostly", "both_arms") ~ read_count_1,
+                                   .default = 0),
+         read_count_rv = case_when(mapped_arms_corrected %in% c("rv_only", "rv_mostly", "both_arms") ~ read_count_2,
+                                   .default = 0)) %>%
+  summarize(start_del = min(start),
+            end_del = max(start),
+            n_pos_strand = sum(strand == "+"),
+            n_neg_strand = sum(strand == "-"),
+            strand = case_when(n_neg_strand > n_pos_strand ~ "-",
+                               n_pos_strand > n_neg_strand ~ "+",
+                               .default = "*"),
+            n_reads_fw = max(read_count_fw),
+            n_reads_rv = max(read_count_rv),
+            read_count = sum(n_reads_fw, n_reads_rv)) %>%
+  select(-c("n_pos_strand", "n_neg_strand")) %>%
+  mutate(start = end_del) #this is where the reporter is (closest to the SCR), relevant when I want to plot insertions and deletions together
+  
+insert_clones_tib = tib_clones_annot_filt6 %>%
+  filter(observed_clonetype_mapping == "insertion") %>%
+  select(chr, sample, start, strand, read_count, read_count_1, read_count_2, sorted_plate, cell_line, experiment, expected_clonetype, observed_clonetype_mapping) %>%
+  dplyr::rename(n_reads_fw = read_count_1, n_reads_rv = read_count_2)
+
+all_mapped_clones = bind_rows(insert_clones_tib, deletion_clones_tib)
+
+# saveRDS(all_mapped_clones, "CM20231214_E2344_locations_all_mapped_clones.rds")
+```
+
+# Confident clone locations
+summary statistics
+```{r}
+all_mapped_clones %>% 
+  group_by(cell_line, strand, observed_clonetype_mapping) %>%
+  summarize(n())
+
+```
+
+```{r plot_confident_clones}
+all_mapped_clones %>% 
+  filter(start >= prange_zoom[1] & start <= prange_zoom[2]) %>%
+  ggplot(aes(x = start, y = read_count, col = cell_line)) +
+  facet_grid(expected_clonetype ~.) +
+  # annotate enhancer
+  annotate("rect", xmin = start(enhancer), xmax = end(enhancer), ymin = -Inf, ymax = Inf, alpha = .2, fill = 'purple') +
+  geom_vline(xintercept = c(start(enhancer), end(enhancer)), col = 'purple') +
+  # annotate gene
+  annotate("rect", xmin = start(gene), xmax = end(gene), ymin = -Inf, ymax = Inf, alpha = .2, fill = 'red') +
+  geom_vline(xintercept = c(start(gene), end(gene)), col = 'red') +
+  #annotate landing pad
+  geom_vline(xintercept = start(landingPad_23), col = 'darkgrey') +
+      #annotate CTCF sites
+  geom_vline(xintercept = start(CTCF_mm10.chr3), col = 'darkgrey', linetype = 'dotted') + 
+  #extra CTCF site that is not in the annotation
+  geom_vline(xintercept = 34772210, col = 'darkgrey', linetype = "dotted") +
+
+  geom_point() +
+    
+  labs(x='Genomic coordinate (Mb)',y='number of reads') + 
+    #layout:
+  theme_classic(base_size = 16) +
+  theme(legend.position = "none") +
+  scale_x_continuous(breaks = scales::pretty_breaks(n = 6), labels = scales::unit_format(scale = 1E-6, accuracy = 0.1, unit=NULL),
+                     limits=prange_zoom) +
+  ggtitle("all  clones") 
+
+```
+
+
+# Conclusion
+I have a confident location for 79 clones, of which 6 23_MK03 insertion clones, 24 23_MK03 deletion clones and 49 23_34A deletion clones. 
+The deletion clones span the entire region between gene and SCR, also the insertion clones are nicely spread out (but mostly closer to the SCR)
+
+
+
+
+
+
+
+
+
+Wild try:
+Can I use the organized pipeline I set up here to also filter and classify the clones from E2221?
+
+# Import data E2221
+
+```{r}
+MappingDataDir_E2221<- "/DATA/usr/c.moene/projects/Hopping_Sox2_mTurq/E2221_mapping_integrations_clones/pipeline_results/mm10/hopping/insertions_ref"
+
+# List all files
+metadata_E2221 <- tibble(file = dir(MappingDataDir_E2221, 
+                   recursive = T, full.names = T)) %>%
+  # filter(grepl("insertions_ref", file)) %>%
+  mutate(sample = str_remove(basename(file), "\\..*"))
+  #FILTER OUT CONTROL POOLS (they are not clones and not relevant here, they are from E2345)
+  # filter(!grepl("_ctrl", sample))
+
+# Load all files
+tib_clones <- bind_rows(lapply(1:nrow(metadata_E2221),
+                        function(i) {
+                          tmp <- read_tsv(metadata_E2221$file[i],
+                                          col_types = cols(
+                                            .default = col_character(),
+                                            start = col_double(),
+                                            end = col_double(),
+                                            # gap_concordance = col_double(),
+                                            read_count = col_double(),
+                                            mapq = col_double(),
+                                            read_count_1 = col_double(),
+                                            mapq_1 = col_character(),
+                                            read_count_2 = col_double(),
+                                            mapq_2 = col_character(),
+                                            # sump = col_double(),
+                                            # p_adj = col_double()
+                                          )) %>%
+                            mutate(sample = metadata_E2221$sample[i])
+                        })) 
+
+```
+
+
+```{r cleaning_merged_tib}
+
+# Change mapping quality to numberic
+tib_clones <- tib_clones %>%
+  mutate(mapq_1 = as.numeric(mapq_1),
+         mapq_2 = as.numeric(mapq_2),
+         mapq_1 = replace_na(mapq_1, 0),
+         mapq_2 = replace_na(mapq_2, 0)) %>%
+  select(-name)
+
+# Factors for chr
+chromosomes <- paste0("chr", c(1:19, "X"))
+
+tib_clones <- tib_clones %>%
+  mutate(chr = factor(chr, levels = chromosomes)) %>%
+  drop_na(chr)
+
+tib_clones <- filter(tib_clones, mapq>=10) 
+
+# saveRDS(tib_clones, paste0("/DATA/usr/c.moene/projects/Hopping_Sox2_mTurq/E2344_mapping_clones/",datetag,"_E2221_complete_tib.rds"))
+```
+
+very quickly: how many clones do we map something:
+```{r}
+filter(tib_clones, read_count >= 10) %>% pull(sample) %>% unique() %>% length()
+
+tib_clones %>% pull(sample) %>% unique() %>% length()
+```
+
+In all 185 samples we have at least 1 location with 10 or more reads
+
+Annotate the putative integrations (only fw, only rv or both)
+```{r}
+tib_clones_annot = tib_clones %>%
+  mutate(mapped_arms = case_when(read_count_1 == 0 ~ "rv_only",
+                                 read_count_2 == 0 ~ "fw_only",
+                                 read_count_1 > 0 & read_count_2 > 0 ~ "both_arms"),
+         sorted_plate = str_remove(str_remove(sample, "-.*_34"), "clone_"),
+         clone_number = str_remove(str_remove(sample, "_34"), "clone_"),
+         expected_clonetype = case_when(sorted_plate == "1" ~ "deletion",
+                                        .default = "insertion")) %>%
+  mutate(cell_line = "23_34A",
+         experiment = "E2204")
+
+
+```
+
+# Consensus location per clone
+Step one: determine the most likely integration(s) per clone.
+Here I want to 'believe' the top location mapped fw, the top location mapped rv and any locations that are somewhat close to this in read count.
+
+```{r}
+#within 5 fold
+tib_clones_annot_filt1 = tib_clones_annot %>% 
+  filter(read_count >= 10) %>%
+  group_by(sample) %>%
+  mutate(ratio_reads_1 = read_count_1 / max(read_count_1), #ratio with the top hit of that orientation, top hit automatically has a ratio of 1 
+         ratio_reads_2 = read_count_2 / max(read_count_2)) %>%
+  filter(ratio_reads_1 >= 0.2 | ratio_reads_2 >= 0.2) #take anything within 5 fold (ratio 0.2) of the top hit
+
+```
+
+
+```{r manually_check_hits_E2221}
+tib_clones_annot_filt3 = tib_clones_annot_filt1 %>% 
+  group_by(sample, expected_clonetype) %>%
+    #try to deal with all deletion clones that have a couple of fw reads in the home location
+  mutate(mapped_arms_corrected = case_when(mapped_arms == "both_arms" & ratio_reads_1 < 0.1 ~ "rv_mostly",
+                                           mapped_arms == "both_arms" & ratio_reads_2 < 0.1 ~ "fw_mostly",
+                                           .default = mapped_arms
+                                           ))
+
+classify_for_checking = tib_clones_annot_filt3 %>%
+  summarize(n_hit_locations = n(),
+            n_both_arms = sum(mapped_arms_corrected == "both_arms"),
+            n_fw_only = sum(mapped_arms_corrected == "fw_only") + sum(mapped_arms_corrected == "fw_mostly"),
+            n_rv_only = sum(mapped_arms_corrected == "rv_only") + sum(mapped_arms_corrected == "rv_mostly")
+            ) %>%
+  mutate(confident_clone = case_when(n_hit_locations == 1 & n_both_arms == 1 ~ "confident_insertion",
+                                     n_hit_locations == 2 & n_fw_only == 1 & n_rv_only == 1 ~ "confident_deletion",
+                                     .default = "manual_check"))
+
+manual_check_clones = classify_for_checking %>% filter(confident_clone == "manual_check") %>% pull(sample)
+
+tib_clones_annot_filt3 %>% filter(sample %in% manual_check_clones)
+```
+
+clone_1-22_34: double clone, two possible fw locations. Discard. 
+clone_1-23_34: some bleed-through reads from 34663573, real location is 34652356. Keep
+clone_1-32_34: many rv only reads from home location, but also an insertion location. Discard.
+clone_1-34_34: some bleed-through reads from 34663573, real location is 34737687. Keep
+clone_1-39_34: some bleed-through reads from 34669368, real location is 34698124. Keep
+clone_1-44_34: some bleed-through reads from 34669368, real location is 34652503. Keep
+clone_1-45_34: some bleed-through reads from 34669368, real location is 34708250. Keep
+clone_1-48_34: some bleed-through reads from 34669368, real location is 34757255.  Keep
+clone_1-53_34: many rv only reads from home location, but no clear fw location (only some bleedthrough). Discard. 
+clone_1-56_34: double clone of insertion and deletion. Discard. 
+clone_1-6_34: two possible fw locations, both might be bleed through. Discard.
+clone_1-69_34: double clone of insertion and deletion. (identical to clone_1-56, so probably two reporters in one cell). Discard. 
+clone_1-81_34: no fw location found, Discard. 
+clone_1-83_34: no fw location found, Discard. 
+clone_1-9_34: some bleed-through reads from 34698124 , real location is 34656407. Keep
+clone_1-92_34: just some extra reads from home location, clearly a good deletion clone. Keep.
+clone_1-96_34: only reads from home location, discard.
+
+clone_2-13_34: some rv only reads in home location, seem to be bleed through. Keep
+clone_2-25_34: no clear location (some reads from home location, some reads from chr3 but with mostly rv reads). Discard. 
+clone_2-37_34: no clear location (both possibilities seem to be bleed through). Discard. 
+clone_2-40_34: just some bleed through reads in home location, seems to be a good insertion clone. Keep.
+clone_2-43_34: double clone, Discard. The same goes for the following (identical) clones:
+clone_2-44_34, clone_2-46_34, clone_2-55_34, clone_2-73_34, clone_4-40_34
+clone_2-86_34: double clone (same as above), or no good hits, discard.
+clone_2-45_34: just some bleed through in home location, seems to be a good insertion clone. Keep.
+clone_2-52_34: no clear location (both possibilities seem to be bleed through). Discard. 
+clone_2-58_34: no clear location (all possibilities seem to be bleed through). Discard. 
+clone_2-61_34: no clear location (both possibilities seem to be bleed through). Discard. 
+clone_2-68_34: potential double clone (home location and 34760157 ). Discard.  
+clone_2-69_34: Chr17 36996918 is bleed through, 34651067 is probably real. Keep
+clone_2-77_34: double clone (36996918  and home location). Discard. 
+clone_2-79_34: no clear location (both possibilities seem to be bleed through). Discard. 
+clone_2-85_34: seems to be really unhopped, 36996918 is bleed through. Keep
+clone_2-90_34: Chr17 36996918 is bleed through, 35120468  is probably real (has less reads, but still quite some, and those cannot come from any other clone). Keep
+clone_2-95_34: just some bleed through in home location, seems to be a good insertion clone. Keep.
+
+clone_3-13_34: weirdly also has rv only reads from 51354968, not a clean insertion clone. Discard.
+clone_3-15_34: no fw mapping reads anywhere. Discard
+clone_3-20_34: double clone, combination of an insertion at 34754177 and a deletion at 34645670. Discard. The same goes for the following (identical) clones:
+clone_3-25_34, clone_3-32_34, clone_4-11_34, clone_5-80_34, clone_6-54_34
+clone_3-31_34: no clear location (both possibilities seem to be bleed through). Discard. 
+clone_3-33_34: double clone, combination of insertion at 34760906 and a very high number of rv only reads in home location. Discard. The same goes for the following (identical) clones:
+clone_3-42_34, clone_3-96_34, clone_4-77_34, clone_4-89_34, clone_4-92_34, clone_5-54_34, clone_5-96_34, clone_6-23_34, clone_6-30_34" 
+clone_3-49_34: only rv arm mapped. Discard. The same goes for the following (identical) clones:
+clone_3-91_34, clone_4-79_34, clone_5-11_34, clone_5-3_34, clone_6-67_34
+clone_3-49_34: insertion in 34770926 , has too many rv only in home location. Discard. The same goes for the following (identical) clones:
+clone_3-52_34, clone_4-3_34, clone_5-76_34, clone_6-68_34, clone_6-69_34
+clone_3-78_34: Chr17 36996918 is bleed through, 34754203 is real. Keep
+
+clone_4-1_34:  some bleed-through reads from 34759802, real location is 34762582. Keep
+clone_4-10_34: some bleed-through reads from home location, real location is 34652354. Keep. 
+clone_4-31_34: some bleed-through reads from home location, real location is 34755529. Keep.
+clone_4-46_34: double clone, in chr3 34756197 and chr15 66501396 . discard. 
+clone_4-47_34: some bleed-through reads from home location, real location is 34759106.  Keep.
+
+clone_6-13_34: probably a double clone of an insertion (34230787) and a deletion (34739608). Discard.  The same goes for the following (identical) clones:
+clone_6-44_34
+clone_6-15_34: some bleed-through reads from home location, real location is 34754910 Keep.
+clone_6-17_34: some bleed-through reads from 34698124, real location is 34766792. Keep.
+clone_6-20_34: some bleed-through reads from home location, and from 34698124, real location is 34759106  Keep.
+clone_6-39_34: I think the two locations are one clone, but the real location is hard to map (low mapq), and in this clone the mapping picked up an alternative location ~60 bp away. I keep the location that is also found in several other (identical?) clones: 34743183. Keep.
+clone_6-7_34: weirdly also has rv only reads from 51354968, not a clean insertion clone. Discard.
+clone_6-75_34: some bleed-through reads from 34770910, real location is 34754383 (this is also a low read count and occurs in one other clone, but these clones didn't share an index so index swapping is unlikely). Keep. 
+clone_6-76_34: some bleed-through reads from 34760906, real location is 34754383 . Keep. 
+clone_6-83_34: some bleed-through reads from 34643961, 34663573, 34743183, real location is 34759225. Keep.
+
+##
+TO DO: manually check the region of clone_6-39_34 and the mapped reads there. Is there sth going on with this clone (and the other clones in the same region, which also have low mapq)
+```{r}
+
+remove_bad_clones = c("clone_1-22_34", "clone_1-32_34", "clone_1-53_34", "clone_1-56_34", "clone_1-6_34", "clone_1-69_34", "clone_1-81_34", "clone_1-83_34",
+                      "clone_2-25_34", "clone_2-37_34",  "clone_2-43_34","clone_2-44_34", "clone_2-46_34", "clone_2-55_34", "clone_2-73_34", "clone_2-86_34",
+                      "clone_2-52_34", "clone_2-58_34", "clone_2-61_34", "clone_2-68_34", "clone_2-77_34", "clone_2-79_34",
+                      "clone_3-13_34", "clone_3-15_34","clone_3-20_34", "clone_3-25_34", "clone_3-32_34", "clone_3-31_34", "clone_3-33_34", "clone_3-42_34","clone_3-96_34",
+                      "clone_3-49_34","clone_3-91_34" ,  "clone_3-52_34", 
+                      "clone_4-11_34", "clone_4-40_34","clone_4-77_34", "clone_4-89_34", "clone_4-92_34", "clone_4-79_34","clone_4-3_34", "clone_4-46_34",
+                      "clone_5-80_34","clone_5-54_34", "clone_5-96_34","clone_5-11_34", "clone_5-3_34", "clone_5-76_34", 
+                      "clone_6-54_34","clone_6-23_34", "clone_6-30_34" ,"clone_6-67_34", "clone_6-68_34" ,"clone_6-69_34", "clone_6-13_34", "clone_6-44_34", "clone_6-7_34"
+                      )
+
+tib_clones_annot_filt4 = tib_clones_annot_filt3 %>%
+  #remove locations that are bleedthrough from different clones
+  filter(!(sample %in% c("clone_1-23_34", "clone_1-34_34") & start == 34663573)) %>% 
+  filter(!(sample %in% c("clone_1-39_34", "clone_1-44_34", "clone_1-45_34", "clone_1-48_34") & start == 34669368)) %>% 
+  filter(!(sample %in% c("clone_1-9_34", "clone_6-17_34") & start == 34698124)) %>% 
+  filter(!(sample %in% c("clone_2-69_34", "clone_2-85_34", "clone_2-90_34", "clone_3-78_34") & start == 36996918)) %>%
+  filter(!(sample %in% c("clone_4-1_34") & start == 34759802)) %>%
+  filter(!(sample %in% c("clone_6-20_34") & start ==34698124  )) %>%
+  filter(!(sample %in% c("clone_6-39_34") & start ==34743123 )) %>%
+  filter(!(sample %in% c("clone_6-75_34") & start == 34770910)) %>%
+  filter(!(sample %in% c("clone_6-76_34") & start == 34760906)) %>%
+  filter(!(sample %in% c("clone_6-83_34") & start %in% c(34643961, 34663573, 34743183))) %>%
+  filter(!(sample %in% c("clone_2-13_34","clone_2-40_34", "clone_2-45_34", "clone_2-95_34", "clone_4-10_34",
+                         "clone_4-31_34", "clone_4-47_34", "clone_6-15_34","clone_6-17_34", "clone_6-20_34", "clone_6-20_34", "clone_6-75_34") & start == 34643961)) %>%
+  filter(! sample %in% remove_bad_clones)
+
+tib_clones_annot_filt4 %>% summarize(N = n()) %>% filter(expected_clonetype == "deletion" & N != 2)
+tib_clones_annot_filt4 %>% summarize(N = n()) %>% filter(expected_clonetype == "insertion" & N != 1)
+
+#clones that we don't know where they are
+tib_clones_annot_filt5 = tib_clones_annot_filt4 %>%
+  filter(!(sample %in% c("clone_1-87_34", "clone_1-96_34")))
+
+
+tib_clones_annot_filt6 = tib_clones_annot_filt5 %>%
+  mutate(n_hit_locations = n(),
+            n_both_arms = sum(mapped_arms_corrected == "both_arms"),
+            n_fw_only = sum(mapped_arms_corrected == "fw_only") + sum(mapped_arms_corrected == "fw_mostly"),
+            n_rv_only = sum(mapped_arms_corrected == "rv_only") + sum(mapped_arms_corrected == "rv_mostly")
+            ) %>%
+  mutate(observed_clonetype_mapping = case_when(n_fw_only == 1 & n_rv_only == 1 ~ "deletion",
+                                                n_both_arms == 1 & n_hit_locations == 1 ~ "insertion",
+                                                # #mark the clones I manually checked/confirmed
+                                                sample %in% c("clone_1-92_34") ~ "deletion",
+                                                .default = "unclear"))
+
+```
+
+Now make one table of the E2221 clone locations together:
+```{r}
+
+deletion_clones_tib = tib_clones_annot_filt6 %>%
+  filter(observed_clonetype_mapping == "deletion") %>%
+  group_by(chr, sample, sorted_plate, cell_line, experiment, expected_clonetype, observed_clonetype_mapping) %>%
+  mutate(read_count_fw = case_when(mapped_arms_corrected %in% c("fw_only", "fw_mostly", "both_arms") ~ read_count_1,
+                                   .default = 0),
+         read_count_rv = case_when(mapped_arms_corrected %in% c("rv_only", "rv_mostly", "both_arms") ~ read_count_2,
+                                   .default = 0)) %>%
+  summarize(start_del = min(start),
+            end_del = max(start),
+            n_pos_strand = sum(strand == "+"),
+            n_neg_strand = sum(strand == "-"),
+            strand = case_when(n_neg_strand > n_pos_strand ~ "-",
+                               n_pos_strand > n_neg_strand ~ "+",
+                               .default = "*"),
+            n_reads_fw = max(read_count_fw),
+            n_reads_rv = max(read_count_rv),
+            read_count = sum(n_reads_fw, n_reads_rv)) %>%
+  select(-c("n_pos_strand", "n_neg_strand")) %>%
+  mutate(start = end_del) #this is where the reporter is (closest to the SCR), relevant when I want to plot insertions and deletions together
+  
+insert_clones_tib = tib_clones_annot_filt6 %>%
+  filter(observed_clonetype_mapping == "insertion") %>%
+  select(chr, sample, start, strand, read_count, read_count_1, read_count_2, sorted_plate, cell_line, experiment, expected_clonetype, observed_clonetype_mapping) %>%
+  dplyr::rename(n_reads_fw = read_count_1, n_reads_rv = read_count_2)
+
+all_mapped_clones = bind_rows(insert_clones_tib, deletion_clones_tib)
+
+# saveRDS(all_mapped_clones, "CM20231218_E2221_locations_all_mapped_clones.rds")
+
+```
+
