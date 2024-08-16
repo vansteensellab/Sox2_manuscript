@@ -1,0 +1,1241 @@
+---
+title: "Figure4_CM20240816_Sox2_CRISPR"
+author: "Mathias & Christine"
+date: "2024-08-16"
+output: 
+  html_document:
+    theme: journal #cerulean
+    highlight: monochrome
+    toc: true
+    toc_float: true
+    code_folding: show
+  editor_options:
+    chunk_output_type: console
+---
+
+
+# Goal
+Plot the figure panels relating to the CRISPR deletion of Sox2, from the sorting data as well as the sorted pools & clones. 
+
+## Notes for re-running
+To re-run this code, change the paths in 'File paths' to the correct location of datasets.
+
+
+# setup
+## libraries
+```{r load_libraries}
+
+# Load dependencies
+library(GenomicRanges)
+library(rtracklayer)
+library(tidyverse)
+# library(dtplyr)
+library(dplyr)
+# library(tidyr)
+library(ggbeeswarm)
+library(ggplot2)
+library(Biostrings)
+library(stringr)
+library(readr)
+library(knitr)
+library(RColorBrewer)
+library(RcppRoll)
+# library(plotly)
+library(readxl)
+library(ggpubr)
+library(ggpmisc)
+library(ggridges)
+library(import)
+library(ggh4x)
+import::from(flowCore, .except=c("filter")) #I don't load the whole flowCore and ggcyto libraries, because they overwrite dplyr's filter function :0
+import::from(ggcyto, 'fortify_fs')
+library(flowDensity)
+#to install this you need to manually install RFOC first:
+#install_url('https://cran.r-project.org/src/contrib/Archive/RFOC/RFOC_3.4-6.tar.gz')
+library(caTools)
+library(ggrastr)
+library(cowplot)
+
+split_string <- function(vect,sep,N1,N2=N1){
+  library(stringr)
+  sapply(vect, function(X){
+    paste(str_split(X,sep)[[1]][N1:N2],collapse = sep)
+  },USE.NAMES = F)
+}
+```
+
+# Paths & parameters
+```{r paths_parameters}
+#datatag
+datetag = paste0("CM",format(Sys.time(), '%Y%m%d'))
+
+# Prepare output 
+output_dir <- paste0("/DATA/projects/Sox2/Figure_Sox2_CRISPR/analysis_",datetag)
+dir.create(output_dir, showWarnings = FALSE)
+
+```
+
+```{r knits setup}
+
+library(knitr)
+opts_chunk$set(cache = T,
+               message = F, 
+               warning = F,
+               dev=c('png', 'pdf'), 
+               dpi = 600,
+               fig.path = file.path(output_dir, "figures/")) 
+pdf.options(useDingbats = FALSE)
+```
+
+## File paths
+```{r}
+path_CTCF_sites = "/DATA/usr/v.franceschini/Workspaces/2024_01_MATHIAS_CTCF_PEAKS/VF240812_calling_CTCF_motifs_again/02_OUTPUTS/CTCF_sites/6764_2_ME_E2_CGATGT_S2_R1_001_peaks_motifs.bed"
+
+path_fcs_E2211 = '/DATA/usr/c.moene/projects/Hopping_Sox2_mTurq/E2211_CRISPR_Sox2_del_1/fcs_for_R'
+
+# E2263 WT samples (for negative cutoffs) 
+path_fcs_WT_E2263_1 = "/DATA/usr/c.moene/projects/Hopping_Sox2_mTurq/E2263_CRISPR_Sox2_del_2/fcs_for_R/export_me20230627_E2263_WT_neg_ctrl_001_Single Cells.fcs"
+path_fcs_WT_E2263_2 = "/DATA/usr/c.moene/projects/Hopping_Sox2_mTurq/E2263_CRISPR_Sox2_del_2/fcs_for_R/export_me20230630_E2263_WT_neg_ctrl_001_Single Cells.fcs"
+
+path_annotation_clones_E2427 = "/DATA/usr/c.moene/projects/Hopping_Sox2_mTurq/Combined_for_paper/clonal_data_combined/CM20240307_E2427_annotation_tib.rds"
+path_annotation_clones_E2350 = "/DATA/usr/c.moene/projects/Hopping_Sox2_mTurq/E2350_generating_CRISPR_clones/CM20240221_E2350_fcs_files_tib.rds"
+
+#hopping data
+path_tib_23_ints = "/DATA/projects/Sox2/GEO_collection/Tagmentation/mapped_integrations_-116kb_Sox2P_pools.txt"
+path_tib_C9_mChpos_ints = "/DATA/projects/Sox2/GEO_collection/Tagmentation/mapped_integrations_-161kb_Sox2P_pools.txt"
+path_tib_C9_mChneg_ints = "/DATA/projects/Sox2/GEO_collection/Tagmentation/mapped_integrations_-161kb_Sox2mCherrydel_Sox2P_pools.txt"
+
+#sorting data hopping
+diva_xml_file = "/DATA/usr/c.moene/projects/Hopping_Sox2_mTurq/E2534_hopping_C9_LP/FACS/Mathias (BvS)20240501_E2534_rep1.xml"
+path_FACS_sorting_E2555 =  "/DATA/usr/c.moene/projects/Hopping_Sox2_mTurq/E2534_hopping_C9_LP/FACS"
+
+#functions
+source("/DATA/usr/c.moene/projects/Hopping_Sox2_mTurq/Combined_for_paper/general_functions/CM20230814_general_plotting_functions.R")
+
+```
+
+
+# Annotations
+
+gene etc
+```{r}
+Sox2_gene <- GRanges(seqnames = "chr3", 
+                    ranges = IRanges(start = 34649995,
+                                     end = 34652461),
+                    strand = "+")
+                    
+enhancer <- GRanges(seqnames = "chr3", 
+                    ranges = IRanges(start = 34753415,
+                                     end = 34766401),
+                    strand = "*")
+
+#CTCF sites based on our own mapping
+CTCF_mm10 <- import.bed(path_CTCF_sites)
+CTCF_mm10.chr3 <- CTCF_mm10[seqnames(CTCF_mm10)== 'chr3']
+# add the missing site after the SCR
+CTCF_mm10.chr3_extra = sort(c(CTCF_mm10.chr3,
+                         GRanges(seqnames = "chr3",
+                                 IRanges(start = 34772210, end = 34772210),
+                                 strand = "+")),
+                         ignore.strand = T)
+
+
+```
+
+
+colors
+```{r}
+
+colors_gates = c("black", "grey60", "#4d6b53", "#e7298a")
+colscale_gates = scale_colour_manual(name = "gate_for_color", values = colors_gates,
+                                     aesthetics = c("color", "fill"))
+
+colors_clones = c(`negative control` = "grey60", untreated = "black", delA = '#f680af', delB = '#d43c8a')
+colscale_clones = scale_colour_manual(name = "treatment_for_color", values = colors_clones,
+                                     aesthetics = c("color", "fill"))
+
+## blue colors beeswarm (mChpos_34)
+myCols_blue = c('#525252', "#080E5B",  "#212B71", "#3A4987", "#465893", "#5A719A", "#6C8AA0")
+names(myCols_blue) = c("ctrl", paste0("P", 1:6))
+colScale7_blue <- scale_colour_manual(name = "population", values = myCols_blue)
+fillScale7_blue <- scale_fill_manual(name = "population", values = myCols_blue)
+
+## pink colors beeswarm (mChneg_34)
+myCols_pink = c('#525252', "#591437",  "#9c2261", "#c92c7c", "#d43c8a", "#e58cb9", "#cb8cac")
+names(myCols_pink) = c("ctrl", paste0("P", 1:6))
+
+cols_CL_pop = c(myCols_blue, myCols_pink)
+names(cols_CL_pop) = c(paste0("mChpos_34_", names(myCols_blue)),
+                       paste0("C9_mCh-_34_" , names(myCols_pink) ))
+colScale_pop_CL = scale_colour_manual(name = "CL_population", values = cols_CL_pop)
+
+## SCR
+brown = "#ffb000"
+```
+
+Exact coordinates landing pads
+```{r}
+
+landingPad_23 <- GRanges(seqnames = "chr3", 
+                    ranges = IRanges(start = 34643960,
+                                     end = 34643962),
+                    strand = "+")
+
+
+landingPad_C9 <- GRanges(seqnames = "chr3", 
+                    ranges = IRanges(start = 34598479,
+                                     end = 34598480),
+                    strand = "+")
+```
+
+
+# Load data, sorting
+
+## wrangle E2211
+```{r load_E2211}
+fcs_files_E2211 = dir(path_fcs_E2211, 
+                      full.names = T)
+
+fcs_files_E2211_tib = tibble(file = fcs_files_E2211) %>%
+  mutate(sample_name_tmp = split_string(str_remove(file, '.*/'), "_", 4, 7)) %>%
+  mutate(cell_line = case_when(grepl("23_34A", sample_name_tmp) ~ "23_34A",
+                               grepl("23_C9", sample_name_tmp) ~ "C9_34",
+                               grepl("8_34_8", sample_name_tmp) ~ "8_34"),
+         treatment = case_when(grepl("ctrl", sample_name_tmp) ~ "untreated",
+                               grepl("Del-A", sample_name_tmp) ~ "delA",
+                               grepl("Del-B", sample_name_tmp) ~ "delB"),
+         timepoint = "sorting",
+         experiment = "E2211",
+         flowcytometer = "sorter",
+         sample_name = paste0(experiment, "_", cell_line, "_", treatment),
+         date = "me20230317"
+         ) %>%
+  mutate(fcs_filter = case_when(grepl("Single Cells.fcs", file) ~ "SingleCells",
+                                grepl("Single Cells.fcs", file) ~ "SingleCells2")) %>%
+  filter(fcs_filter == "SingleCells") #use equivalent filtering to the other samples (only filter for doublets once)
+
+```
+
+
+## Load data
+```{r combine_fcs_tibs}
+
+fcs_annotation_tib = bind_rows(fcs_files_E2211_tib) %>%
+  mutate(cell_line = factor(cell_line, c("C9_34", "23_34A", "8_34", "WT"))) %>%
+  mutate(landing_pad = case_when(cell_line == "WT" ~ "none",
+                                 .default = split_string(cell_line, "_", 1))) %>%
+  mutate(landing_pad = factor(landing_pad, levels = c("none", "C9", "23", "8"),
+                               labels = c("no insert", "-161 kb", "-116 kb", "-39 kb")),
+         treatment = factor(treatment, levels  = c("untreated", "delA", "delB"),
+                            labels = c("untreated", "ΔSox2", "ΔCBS_Sox2"))) %>%
+  select(-c(fcs_filter))
+```
+
+```{r load_fcs_files_sorter}
+fcs_annotation_df = data.frame(fcs_annotation_tib)
+rownames(fcs_annotation_df) = fcs_annotation_df$sample_name
+
+flowset = flowCore::read.flowSet(files = fcs_annotation_df$file, alter.names = T, truncate_max_range = F, 
+                                 ignore.text.offset = T, 
+                                 column.pattern = 'BL.B..530_30.A|YG.D..610_20.A|V.F..450_50.A|FSC.A|SSC.A'
+                                 #samples from sorter have different fluorophores, only take the shared ones
+)
+
+
+flowCore::sampleNames(flowset) = fcs_annotation_df$sample_name
+pData(flowset) = fcs_annotation_df
+
+flowset_fluo = flowset[,c('BL.B..530_30.A', 'YG.D..610_20.A', 'V.F..450_50.A')]
+colnames(flowset_fluo) = c("GFP", "mCherry", "mTurq")
+
+rm(flowset)
+
+```
+
+```{r preprocess_fcs_data}
+total_cell_count_tmp = flowCore::keyword(flowset_fluo, "$TOT")[,'$TOT']
+total_cell_count = as.numeric(total_cell_count_tmp)
+names(total_cell_count) = names(total_cell_count_tmp)
+
+measurement_date = flowCore::keyword(flowset_fluo, "$DATE")[,'$DATE']
+
+median_mTurq = sapply(1:length(flowset_fluo), function(i){
+  median(exprs(flowset_fluo[[i]])[,'mTurq'])
+})
+names(median_mTurq) = sampleNames(flowset_fluo)
+
+median_mCherry = sapply(1:length(flowset_fluo), function(i){
+  median(exprs(flowset_fluo[[i]])[,'mCherry'])
+})
+names(median_mCherry) = sampleNames(flowset_fluo)
+
+
+median_GFP = sapply(1:length(flowset_fluo), function(i){
+  median(exprs(flowset_fluo[[i]])[,'GFP'])
+})
+names(median_GFP) = sampleNames(flowset_fluo)
+
+pData(flowset_fluo)$median_mTurq = median_mTurq
+pData(flowset_fluo)$median_mCherry = median_mCherry
+pData(flowset_fluo)$median_GFP = median_GFP
+
+pData(flowset_fluo)$total_cell_count = total_cell_count
+pData(flowset_fluo)$measurement_date = measurement_date #date from the fcs file, must be correct
+
+flowset_fluo_data_tib = tibble(pData(flowset_fluo))
+
+```
+
+# Figure sorting data
+
+
+## set some cutoffs
+```{r set_cutoffs}
+#load WT sames from E2263 (also sorter) to set GFP-/mCh- cutoffs
+flowset_WT_ctrls = flowCore::read.flowSet(files = c(path_fcs_WT_E2263_1, path_fcs_WT_E2263_2), alter.names = T, truncate_max_range = F)[,c('BL.B..530_30.A', 'YG.D..610_20.A', 'V.F..450_50.A', 'FSC.A', 'SSC.A')]
+colnames(flowset_WT_ctrls) = c("GFP", "mCherry", "mTurq",'FSC', 'SSC')
+
+mCh_neg_99_ls = lapply(1:2, function(i){
+  quantile(exprs(flowset_WT_ctrls[[i]][,'mCherry']), probs = 0.99)
+})
+mCh_neg_99 = mean(unlist(mCh_neg_99_ls)) #cut-off for mCherry negative
+
+GFP_neg_99_ls = lapply(1:2, function(i){
+  quantile(exprs(flowset_WT_ctrls[[i]][,'GFP']), probs = 0.99)
+})
+GFP_neg_99 = mean(unlist(GFP_neg_99_ls)) #cut-off for GFP negative
+
+
+mT_neg_99_ls = lapply(1:2, function(i){
+  quantile(exprs(flowset_WT_ctrls[[i]][,'mTurq']), probs = 0.99)
+})
+mT_neg_99 = mean(unlist(mT_neg_99_ls)) #cut-off for mTurq negative
+
+```
+
+## Dotplot example
+
+Use 1.5x the border of the WT sample as a cutoff for the GFP+ and mCh+ gates (so we have some space)
+
+```{r A_GFP_mCh_dotplot_one_example}
+dotplot_23_delB_GFP_mCh = ggplot(flowset_fluo[3], aes(x = GFP, y= mCherry, fill = after_stat(ncount))) +#if you want each separate panel to end in the highest color
+  facet_nested(landing_pad + treatment ~ date) +
+  theme_classic() +
+  geom_hex(bins = 128) +
+  scale_fill_distiller(palette = 'Spectral') +
+  ggcyto::scale_x_flowjo_biexp(widthBasis = -100, breaks = c(-10^3, 0, 10^3, 10^4, 10^5),
+                               pos = 4.42) +
+  ggcyto::scale_y_flowjo_biexp(widthBasis = -100, breaks = c(-10^3, 0, 10^3, 10^4, 10^5),
+                               pos = 4.42) +
+  geom_hline(yintercept = c(mCh_neg_99, mCh_neg_99*1.5)) +
+  geom_vline(xintercept = c(GFP_neg_99, GFP_neg_99*1.5)) +
+  theme(aspect.ratio = 1,
+        legend.position = 'none' )
+# ggsave('/DATA/usr/c.moene/projects/Hopping_Sox2_mTurq/Combined_for_paper/Manuscript_figures/Sox2_CRISPR/CM20240301_FACS_GFP_mCherry_example.pdf' , dotplot_23_delB_GFP_mCh, width = 7, units = 'cm' )
+```
+
+
+## gating the sorting data
+Use 1.5x the border of the WT sample as a cutoff for the GFP+ and mCh+ gates (so we have some space)
+
+```{r gate_mCh_GFP_level}
+
+double_posGate <- rectangleGate(filterId="GFP+ mCh+",
+                                "GFP"=c(1.5*GFP_neg_99, Inf), "mCherry"=c(1.5*mCh_neg_99, Inf))
+mCh_negGate <- rectangleGate(filterId="GFP+ mCh-",
+                                "GFP"=c(1.5*GFP_neg_99, Inf), "mCherry"=c(-Inf, mCh_neg_99))
+GFP_negGate <- rectangleGate(filterId="GFP- mCh+",
+                                "GFP"=c(-Inf, GFP_neg_99), "mCherry"=c(1.5*mCh_neg_99, Inf))
+
+doublepos_fcs = flowCore::Subset(flowset_fluo, double_posGate)
+pData(doublepos_fcs)$gate = "doublepos"
+sampleNames(doublepos_fcs) = paste0(sampleNames(doublepos_fcs), "_", pData(doublepos_fcs)$gate)
+
+mChneg_fcs = flowCore::Subset(flowset_fluo, mCh_negGate)
+pData(mChneg_fcs)$gate = "mChneg"
+sampleNames(mChneg_fcs) = paste0(sampleNames(mChneg_fcs), "_", pData(mChneg_fcs)$gate)
+
+GFPneg_fcs = flowCore::Subset(flowset_fluo, GFP_negGate)
+pData(GFPneg_fcs)$gate = "GFPneg"
+sampleNames(GFPneg_fcs) = paste0(sampleNames(GFPneg_fcs), "_", pData(GFPneg_fcs)$gate)
+
+
+gated_fcs = rbind2(doublepos_fcs, mChneg_fcs)
+gated_fcs = rbind2(gated_fcs, GFPneg_fcs)
+
+cell_count_gate = sapply(1:length(gated_fcs), function(i){
+  nrow(gated_fcs[[i]])
+})
+pData(gated_fcs)$cell_count_gate = cell_count_gate
+```
+
+## plot density plots
+
+```{r B_mTurq_ridgeline_gated_rep1, fig.width= 7, fig.height= 7}
+gated_samples_oi = pData(gated_fcs)$treatment %in% c("ΔSox2", "ΔCBS_Sox2")|
+  pData(gated_fcs)$gate == "doublepos" #for untreated the GFPneg and mChneg gates are meaningless
+
+gated_samples_oi_rep1 = (pData(gated_fcs)$treatment %in% c("ΔSox2", "ΔCBS_Sox2")|   pData(gated_fcs)$gate == "doublepos") & 
+  pData(gated_fcs)$experiment == "E2211"
+
+# we don't need the duplicates sample if we use ridgeline plots
+#still do need to add a factor for the colors
+gated_fcs_2 = gated_fcs
+pData(gated_fcs_2)$gate_for_color = case_when(pData(gated_fcs_2)$treatment == "untreated" ~ 
+                                                  paste0(pData(gated_fcs_2)$gate, "_untreated"),
+                                                .default = pData(gated_fcs_2)$gate)
+pData(gated_fcs_2)$gate_for_color = factor(pData(gated_fcs_2)$gate_for_color, 
+                                             levels = c("doublepos_untreated","doublepos", "GFPneg", "mChneg"))
+
+#plot rep1
+cell_count_tib_rep1 = 
+  tibble(pData(gated_fcs_2[gated_samples_oi_rep1])) %>%
+  select(experiment, gate, cell_line,gate_for_color, treatment, cell_count_gate, date)
+
+#regular density plot
+dens_plot_active_LP_gated  = ggplot(gated_fcs_2[gated_samples_oi_rep1] , 
+       aes(x = mTurq, fill = gate_for_color, col = gate_for_color)) +
+  # facet_nested(experiment + treatment ~ cell_line, scale = "free_y") +
+  facet_nested(treatment ~ cell_line, scale = "free_y", space = 'free_y') +
+  geom_density_ridges(aes(y = fct_reorder(gate_for_color, as.integer(gate_for_color), .desc= T)),
+                      size =0.3, # rel_min_height  = 0.005,
+                      scale = 1.5,
+                      alpha = 0.50) + #, 
+  ggcyto::scale_x_flowjo_biexp(widthBasis = -100, breaks = c(-10^3, 0, 10^3, 10^4, 10^5), limits = c(-10^3, 5*10^5),
+                               pos = 4.42 ) +
+  scale_y_discrete(expand = expansion( add = c(0, 1.7))) +
+  geom_text_npc(data = cell_count_tib_rep1, aes(label = cell_count_gate, 
+                                                npcy = 1.2-(as.integer(gate_for_color)/4), col = gate_for_color), 
+                npcx = 0.95, hjust = "inward") +
+  theme_bw(base_size = 14) +
+  theme(axis.title.y = element_blank(),
+        legend.position = 'none') +
+  colscale_gates 
+
+dens_plot_active_LP_gated
+# ggsave( "/DATA/usr/c.moene/projects/Hopping_Sox2_mTurq/Combined_for_paper/Manuscript_figures/Sox2_CRISPR/CM20240304_FACS_density_gates_active_LPs_E2211.pdf", dens_plot_active_LP_gated, width = 20, height = 20, units = "cm")
+
+```
+
+```{r S4A_density_untreated_controls}
+
+# plot only untreated plus WT ctrl for sup
+gated_samples_oi_rep1_untreated = (pData(gated_fcs)$treatment == "untreated" &
+                                     pData(gated_fcs)$experiment == "E2211" &
+                                     pData(gated_fcs)$gate == "doublepos")
+
+pData(gated_fcs)[gated_samples_oi_rep1_untreated,]
+
+dens_plot_LP_untreated_gated = 
+ggplot(gated_fcs[gated_samples_oi_rep1_untreated], 
+       aes(x = mTurq)) +
+  #facet_nested(experiment + treatment ~ cell_line, scale = "free_y") +
+  #facet_nested(cell_line  ~ treatment, scale = "free_y", space = 'free_y') +
+  geom_density_ridges(aes(y = cell_line, fill = "black"),
+                      size =0.3, # rel_min_height  = 0.005,
+                      scale = 1.5,
+                      alpha = 0.50,
+                      quantile_lines = TRUE, quantiles = 2) + 
+  ggcyto::scale_x_flowjo_biexp(widthBasis = -100, breaks = c(-10^3, 0, 10^3, 10^4, 10^5), limits = c(-10^3, 1*10^5),
+                               pos = 4.42 ) +
+  
+  scale_y_discrete(expand = expansion(add = c(0, 0.8))) +
+  # geom_text_npc(data = cell_count_tib_rep1, aes(label = cell_count_gate, 
+  #                                               npcy = 1.2-(as.integer(gate_for_color)/4), col = gate_for_color), 
+                # npcx = 0.95, hjust = "inward") +
+  theme_bw(base_size = 14) +
+  theme(axis.title.y = element_blank(),
+        legend.position = 'none') +
+  colscale_gates 
+
+dens_plot_LP_untreated_gated
+```
+
+
+# Sorted clones
+
+## load CRISPR clones
+
+```{r wrangle_fcs_tib_clones}
+
+matched_annotation_tib_E2427 = readRDS(path_annotation_clones_E2427)
+
+
+fcs_files_E2350 = readRDS(path_annotation_clones_E2350) %>%
+  #remove the WT samples that were measured on a different day (labeled here as E2250, but were actually measured in E2254)
+  filter(!name %in% c(paste0('E2250_WT_untreated_none_E', 10:12))) %>%
+
+  mutate(flow_experiment = experiment) %>%
+  filter(!cell_line == "C10_34" ) %>%
+  mutate(GFP_state = case_when(sorted_phenotype == "GFP-" ~ "GFP-",
+                               cell_line == "WT" ~ "GFP-",
+                               .default = "GFP+"),
+         mCh_state = case_when(sorted_phenotype %in% c("mCh-_mT-", "mCh-_mT+", "mCh-_NA") ~ "mCh-",
+                               cell_line == "WT" ~ "mCh-",
+                               .default = "mCh+")) %>%
+  mutate(expected_insert = case_when(cell_line %in% c("23_34A", "8_34.8", "C9_34") ~ "34",
+                                     .default = "none")) %>%
+  mutate(landing_pad = case_when(expected_insert == "34" ~  str_replace(cell_line, "_.*$", ""),
+                                 .default = "none")) %>%
+  mutate(control_samples = case_when(cell_line %in% c("WT", "F121-9") ~ cell_line,
+                                     cell_line == "23_34A" & treatment == "untreated" ~ "23_34A")) %>%
+  mutate(type = case_when(type == "pool" ~ "sorted_pool",
+                          .default = type)) %>%
+  mutate(sorted_phenotype = case_when(sorted_phenotype == "mCh-_NA" ~ "mCh-_mT+", #correct the pools which were wrongly labeled as mCh-_NA
+                                      .default = sorted_phenotype)) %>%
+
+  #only include remeasurements, but also from the sorter (for E2263)
+  filter(timepoint == "remeasurement") %>%
+  mutate(exp_name = paste0(experiment, "_", sample_name)) %>%
+  mutate(cell_line_clone_name = case_when(type == "control" ~ cell_line,
+                                          type == "clone" ~ paste0(cell_line, "_", treatment, "_", clone_name))) %>% 
+  mutate(treatment_for_color = case_when(cell_line %in% c("WT", "F121-9") ~ "negative control",
+                                         .default = treatment))%>%
+  mutate(cell_line_treatment = paste0(cell_line, "_", treatment)) %>%
+  
+  #only include the treatments relevant here:
+  filter(treatment %in% c('untreated', 'delA', 'delB')) %>%
+  mutate(treatment = factor(treatment, levels = c('untreated', 'delA', 'delB')))
+  
+
+```
+
+
+
+```{r load_fcs_data_clones}
+fcs_annotation_E2350_df = data.frame(fcs_files_E2350)
+rownames(fcs_annotation_E2350_df) = fcs_files_E2350$exp_name
+
+flowset = flowCore::read.flowSet(files = fcs_annotation_E2350_df$file, alter.names = T, truncate_max_range = F, 
+                                 ignore.text.offset = T, 
+                                 column.pattern = 'BL.B..530_30.A|YG.D..610_20.A|V.F..450_50.A|FSC.A|SSC.A'
+                                 #samples from sorter have different fluorophores, only take the shared ones
+)
+
+
+flowCore::sampleNames(flowset) = fcs_annotation_E2350_df$exp_name
+pData(flowset) = fcs_annotation_E2350_df
+
+flowset_fluo_clones = flowset[,c('BL.B..530_30.A', 'YG.D..610_20.A', 'V.F..450_50.A')]
+colnames(flowset_fluo_clones) = c("GFP", "mCherry", "mTurq")
+
+rm(flowset)
+```
+
+```{r preprocess_fcs_data_clones}
+total_cell_count_tmp = flowCore::keyword(flowset_fluo_clones, "$TOT")[,'$TOT']
+total_cell_count = as.numeric(total_cell_count_tmp)
+names(total_cell_count) = names(total_cell_count_tmp)
+
+measurement_date = flowCore::keyword(flowset_fluo_clones, "$DATE")[,'$DATE']
+
+median_mTurq = sapply(1:length(flowset_fluo_clones), function(i){
+  median(exprs(flowset_fluo_clones[[i]])[,'mTurq'])
+})
+names(median_mTurq) = sampleNames(flowset_fluo_clones)
+
+median_mCherry = sapply(1:length(flowset_fluo_clones), function(i){
+  median(exprs(flowset_fluo_clones[[i]])[,'mCherry'])
+})
+names(median_mCherry) = sampleNames(flowset_fluo_clones)
+
+
+median_GFP = sapply(1:length(flowset_fluo_clones), function(i){
+  median(exprs(flowset_fluo_clones[[i]])[,'GFP'])
+})
+names(median_GFP) = sampleNames(flowset_fluo_clones)
+
+pData(flowset_fluo_clones)$median_mTurq = median_mTurq
+pData(flowset_fluo_clones)$median_mCherry = median_mCherry
+pData(flowset_fluo_clones)$median_GFP = median_GFP
+
+pData(flowset_fluo_clones)$total_cell_count = total_cell_count
+pData(flowset_fluo_clones)$measurement_date = measurement_date #date from the fcs file, must be correct
+
+flowset_fluo_clones_data_tib = tibble(pData(flowset_fluo_clones))
+
+```
+
+### filter good clones
+```{r}
+good_clones_tib = flowset_fluo_clones_data_tib %>%
+  filter(total_cell_count >= 1000 &
+           (is.na(PCR_band_deletion) | PCR_band_deletion) & 
+          
+           (is.na(PCR_band_intact_allele) | PCR_band_intact_allele) 
+  )
+
+flowset_fluo_good = flowset_fluo_clones[good_clones_tib$exp_name]
+
+
+```
+
+### mark highest peak(s)
+```{r}
+#set up the transformations I use in the plots
+fwd_transf  = flowWorkspace::flowjo_biexp(widthBasis = -100, pos = 4.42, inverse = F)
+inv_transf = flowWorkspace::flowjo_biexp(widthBasis = -100, pos = 4.42, inverse = T)
+
+#function to draw a line ad the two top peaks
+#important: the values for the geom_density_ridges quantile lines need to be sorted non-decreasingly!
+fun_high_peaks2 = function(x, ...){
+  peaks_obj = getPeaks(fwd_transf(x))
+  N_peaks_to_pick = min(2, length(peaks_obj$Peaks))
+  # N_peaks_to_pick = 1
+  top_2_peaks = order(peaks_obj$P.h, decreasing = T)[1:N_peaks_to_pick] 
+  linear_peak = inv_transf(getPeaks(fwd_transf(x))$Peaks[top_2_peaks])
+  sort(linear_peak)
+}
+
+
+```
+
+##  Plot sorted pools
+pools (and controls) of E2250
+```{r C_remeasured_pools_E2250, fig.width = 5, fig.height=5}
+
+#E2250 pools
+samples_E2250_pools_paper_idx = pData(flowset_fluo_good)$experiment %in% c("E2250") &
+  pData(flowset_fluo_good)$type %in% c("control", "sorted_pool") &
+  pData(flowset_fluo_good)$sorted_phenotype %in% c("none", "mCh-_mT+") &
+  !pData(flowset_fluo_good)$cell_line %in% c("F121-9")
+
+# #order the samples in a sensible order
+levels_pools =  pData(flowset_fluo_good[samples_E2250_pools_paper_idx]) %>% 
+  mutate(treatment = factor(treatment, levels = c("delA", "delB", "untreated"))) %>%
+  mutate(landing_pad = factor(landing_pad, levels = c("8", "23", "C9", "none"))) %>%
+  arrange(landing_pad, treatment) %>% pull(exp_name)
+
+ggplot(flowset_fluo_good[samples_E2250_pools_paper_idx], aes(x = mTurq, fill = treatment_for_color)) +
+  facet_nested(  factor(landing_pad, levels = c("none", "C9", "23", "8"))  ~  ., scales = 'free_y', space = 'free_y') +
+  geom_density_ridges(aes(y =  factor(exp_name, levels = rev(levels_pools))),
+                      size =0.3, # rel_min_height  = 0.005,
+                      scale = 1.5,
+                      alpha = 0.75,
+                      quantile_lines = TRUE, quantile_fun = fun_high_peaks2) + #, 
+  ggcyto::scale_x_flowjo_biexp(widthBasis = -100, breaks = c(-10^3, 0, 10^3, 10^4, 10^5),
+                               pos = 4.42) +
+  scale_y_discrete(expand = expansion( add = c(0, 2))) +
+  theme_bw() +
+  theme(legend.position = 'bottom',
+        axis.title.y = element_blank()) +
+  colscale_clones
+```
+
+## Plot sorted clones
+
+
+colors:
+delA and delB (mCh-) two types of pink
+black for unedited clone
+grey for WT/F121-9
+
+
+
+```{r sup_clones_23_delA}
+#select the samples to plot
+samples_clones_23_delA = pData(flowset_fluo_good) %>%
+  filter(type %in%  c("clone", "control") &
+           landing_pad %in% c("23", "none") &
+           sorted_phenotype %in% c("mCh-_mT+", "none") &
+           treatment %in% c("untreated", "delA") &
+           date == "ME20230426") %>% pull(exp_name)
+samples_clones_23_delA_idx = pData(flowset_fluo_good)$exp_name %in% samples_clones_23_delA 
+
+#order them by mTurq value / the controls in a sensible order
+level_order_clones = pData(flowset_fluo_good[samples_clones_23_delA_idx]) %>%
+  filter(type == "clone") %>%
+  arrange(median_mTurq) %>% pull(cell_line_clone_name)
+level_order <- c("WT", "F121-9", "23_34A", level_order_clones )
+
+#plot
+ggplot(flowset_fluo_good[samples_clones_23_delA_idx], aes(x = mTurq, fill = treatment_for_color)) +
+  # facet_nested(   type ~ . , scales = 'free_y', space = 'free_y', render_empty = F) +
+  geom_density_ridges(aes(y = factor(cell_line_clone_name, levels = level_order)),
+                      size =0.3, # rel_min_height  = 0.005,
+                      scale = 2,
+                      alpha = 0.75,
+                      quantile_lines = TRUE, quantile_fun = fun_high_peaks2, vline_width = 0.5) + #+ #,
+  ggcyto::scale_x_flowjo_biexp(widthBasis = -100, breaks = c(-10^3, 0, 10^3, 10^4, 10^5),
+                               pos = 4.42, limits = c(0, 5*10^4)) +
+  scale_y_discrete(expand = expansion( add = c(0, 1.5))) +
+  # geom_vline(data = filter(peaks_linear_tib, exp_name %in% pData(flowset_fluo_good[samples_clones_23_delA_idx])$exp_name),aes(xintercept = mTurq_peak)) +
+  theme_bw() +
+  theme(legend.position = 'bottom',
+        axis.title.y = element_blank(), 
+        aspect.ratio = 1.5) +
+  colscale_clones
+        # axis.text.y = element_blank()
+
+```
+
+```{r sup_clones_23_delB}
+#select the samples to plot
+samples_clones_23_delB = pData(flowset_fluo_good) %>%
+  filter(type %in%  c("clone", "control") &
+           landing_pad %in% c("23", "none") &
+           sorted_phenotype %in% c("mCh-_mT+", "none") &
+           treatment %in% c("untreated", "delB") &
+           date == "me20230418") %>% pull(exp_name)
+samples_clones_23_delB_idx = pData(flowset_fluo_good)$exp_name %in% samples_clones_23_delB 
+
+#order them by mTurq value / the controls in a sensible order
+level_order_clones = pData(flowset_fluo_good[samples_clones_23_delB_idx]) %>%
+  filter(type == "clone") %>%
+  arrange(median_mTurq) %>% pull(cell_line_clone_name)
+level_order <- c("WT", "F121-9", "23_34A", level_order_clones )
+
+#plot
+ggplot(flowset_fluo_good[samples_clones_23_delB_idx], aes(x = mTurq, fill = treatment_for_color)) +
+  # facet_nested(   type ~ . , scales = 'free_y', space = 'free_y', render_empty = F) +
+  geom_density_ridges(aes(y = factor(cell_line_clone_name, levels = level_order)),
+                      size =0.3, # rel_min_height  = 0.005,
+                      scale = 2,
+                      alpha = 0.75,
+                      quantile_lines = TRUE, quantile_fun = fun_high_peaks2, vline_width = 0.5) + #+ #,
+  ggcyto::scale_x_flowjo_biexp(widthBasis = -100, breaks = c(-10^3, 0, 10^3, 10^4, 10^5),
+                               pos = 4.42, limits = c(0, 5*10^4)) +
+  scale_y_discrete(expand = expansion( add = c(0, 1.5))) +
+  # geom_vline(data = filter(peaks_linear_tib, exp_name %in% pData(flowset_fluo_good[samples_clones_23_delA_idx])$exp_name),aes(xintercept = mTurq_peak)) +
+  theme_bw() +
+  theme(legend.position = 'bottom',
+        axis.title.y = element_blank(), 
+        aspect.ratio = 1.5) +
+  colscale_clones
+
+```
+
+```{r sup_clones_8_delB}
+#select the samples to plot
+samples_clones_8_delB = pData(flowset_fluo_good) %>%
+  filter(type %in%  c("clone", "control") &
+           landing_pad %in% c("8", "none") &
+           sorted_phenotype %in% c("mCh-_mT+", "none") &
+           treatment %in% c("untreated", "delB") &
+           date == "20231128") %>% pull(exp_name)
+samples_clones_8_delB_idx = pData(flowset_fluo_good)$exp_name %in% samples_clones_8_delB 
+
+#order them by mTurq value / the controls in a sensible order
+level_order_clones = pData(flowset_fluo_good[samples_clones_8_delB_idx]) %>%
+  filter(type == "clone") %>%
+  arrange(median_mTurq) %>% pull(cell_line_clone_name)
+level_order <- c("WT", "F121-9", "8_34.8", level_order_clones )
+
+#plot
+ggplot(flowset_fluo_good[samples_clones_8_delB_idx], aes(x = mTurq, fill = treatment_for_color)) +
+  # facet_nested(   type ~ . , scales = 'free_y', space = 'free_y', render_empty = F) +
+  geom_density_ridges(aes(y = factor(cell_line_clone_name, levels = level_order)),
+                      size =0.3, # rel_min_height  = 0.005,
+                      scale = 2,
+                      alpha = 0.75,
+                      quantile_lines = TRUE, quantile_fun = fun_high_peaks2, vline_width = 0.5) + #+ #,
+  ggcyto::scale_x_flowjo_biexp(widthBasis = -100, breaks = c(-10^3, 0, 10^3, 10^4, 10^5),
+                               pos = 4.42, limits = c(0, 5*10^4)) +
+  scale_y_discrete(expand = expansion( add = c(0, 1.5))) +
+  # geom_vline(data = filter(peaks_linear_tib, exp_name %in% pData(flowset_fluo_good[samples_clones_23_delA_idx])$exp_name),aes(xintercept = mTurq_peak)) +
+  theme_bw() +
+  theme(legend.position = 'bottom',
+        axis.title.y = element_blank(), 
+        aspect.ratio = 1.5) +
+  colscale_clones
+
+```
+
+```{r sup_clones_C9_delB}
+#select the samples to plot
+samples_clones_C9_delB = pData(flowset_fluo_good) %>%
+  filter(type %in%  c("clone", "control") &
+           landing_pad %in% c("C9", "none") &
+           sorted_phenotype %in% c("mCh-_mT+","mCh-_mT-", "none") & #for C9 we sorted mT high and lower clones from the pool, both are mTurq positive and should be included in the plot
+           treatment %in% c("untreated", "delB") &
+           date == "20231128") %>% pull(exp_name)
+samples_clones_C9_delB_idx = pData(flowset_fluo_good)$exp_name %in% samples_clones_C9_delB 
+
+#order them by mTurq value / the controls in a sensible order
+level_order_clones = pData(flowset_fluo_good[samples_clones_C9_delB_idx]) %>%
+  filter(type == "clone") %>%
+  arrange(median_mTurq) %>% pull(cell_line_clone_name)
+level_order <- c("WT", "F121-9", "C9_34", level_order_clones )
+
+#plot
+ggplot(flowset_fluo_good[samples_clones_C9_delB_idx], aes(x = mTurq, fill = treatment_for_color)) +
+  # facet_nested(   type ~ . , scales = 'free_y', space = 'free_y', render_empty = F) +
+  geom_density_ridges(aes(y = factor(cell_line_clone_name, levels = level_order)),
+                      size =0.3, # rel_min_height  = 0.005,
+                      scale = 2,
+                      alpha = 0.75,
+                      quantile_lines = TRUE, quantile_fun = fun_high_peaks2, vline_width = 0.5) + #+ #,
+  ggcyto::scale_x_flowjo_biexp(widthBasis = -100, breaks = c(-10^3, 0, 10^3, 10^4, 10^5),
+                               pos = 4.42, limits = c(0, 5*10^4)) +
+  scale_y_discrete(expand = expansion( add = c(0, 1.5))) +
+  # geom_vline(data = filter(peaks_linear_tib, exp_name %in% pData(flowset_fluo_good[samples_clones_23_delA_idx])$exp_name),aes(xintercept = mTurq_peak)) +
+  theme_bw() +
+  theme(legend.position = 'bottom',
+        axis.title.y = element_blank(), 
+        aspect.ratio = 1.5) +
+  colscale_clones
+
+```
+## Boxplot highest peaks
+
+calculate the normalized / relative medians
+```{r}
+# get the autofluorescence for all dates
+autofluo_tib = good_clones_tib %>%
+  group_by(flow_experiment, date) %>%
+  filter(control_samples == "WT") %>%
+  summarize(autofluo_mTurq = mean(median_mTurq),
+            autofluo_mCherry = mean(median_mCherry),
+            autofluo_GFP = mean(median_GFP)
+            )
+
+#get normalized corrected fluorescence for all samples
+good_clones_tib_norm_tmp = good_clones_tib %>% 
+  left_join(autofluo_tib) %>%
+  #autofluorescence corrected (_cor)
+  mutate(median_mTurq_cor = median_mTurq - autofluo_mTurq,
+         median_mCherry_cor = median_mCherry - autofluo_mCherry,
+         median_GFP_cor = median_GFP - autofluo_GFP) %>%
+  #normalized to GFP (_norm)
+  mutate(mTurq_norm = median_mTurq_cor / median_GFP_cor,
+         mCherry_norm = median_mCherry_cor / median_GFP_cor)
+
+# get standard values (23_34A) for all dates
+standard_tib = good_clones_tib_norm_tmp %>% 
+  group_by(flow_experiment, date) %>%
+  filter(control_samples == "23_34A") %>%
+  summarize(
+    #mean autofluo corrected
+    mTurq_cor_st = mean(median_mTurq_cor),
+    mCherry_cor_st = mean(median_mCherry_cor),
+    GFP_cor_st = mean(median_GFP_cor),
+    # mean of normalized to GFP
+    mTurq_norm_st = mean(mTurq_norm),
+    mCherry_norm_st = mean(mCherry_norm),
+    #mean raw median values
+    mTurq_st = mean(median_mTurq),
+    mCherry_st = mean(median_mCherry),
+    GFP_st = mean(median_GFP)
+    )
+
+#get relative expression values for all samples
+good_clones_tib_norm = good_clones_tib_norm_tmp %>%
+  left_join(standard_tib) %>%
+  # autofluorescence corrected and relative to 23_34A (_cor_rel)
+  mutate(mTurq_cor_rel = median_mTurq_cor / mTurq_cor_st,
+         mCherry_cor_rel = median_mCherry_cor / mCherry_cor_st,
+         GFP_cor_rel = median_GFP_cor / GFP_cor_st,
+         # autofluoresnce corrected, normalized to GFP and relative to 23_34A
+         mTurq_norm_rel = mTurq_norm / mTurq_norm_st,
+         mCherry_norm_rel = mCherry_norm / mCherry_norm_st,
+         # relative to 23_34A only (no autofluorescence correction etc)
+         mTurq_rel = median_mTurq / mTurq_st,
+         mCherry_rel = median_mCherry / mCherry_st,
+         GFP_rel = median_GFP / GFP_st  )
+
+
+``` 
+
+find the highest peaks and normalize them
+```{r}
+#samples to calculate
+samples_oi_tib = pData(flowset_fluo_good) %>%
+  filter(type %in% c("clone", "control")) %>%
+  filter(flowcytometer == "analytical")
+samples_oi = samples_oi_tib$exp_name
+
+
+#find the two highest peaks in the density plot (transformed back to linear space)
+# just take the two highest peaks for each sample, if it shows two peaks (unbiased approach)
+peaks_linear_list = lapply(samples_oi, function(smpl){
+  mTurq_expr = exprs(flowset_fluo_good[[smpl]])[,'mTurq']
+  peaks_obj = getPeaks(fwd_transf(mTurq_expr))
+  sample_type = pData(flowset_fluo_good) %>% filter(sample_name == smpl) %>% pull(type)
+  N_peaks_to_pick = min(2, length(peaks_obj$Peaks)) #get two peaks if there are 2 or more, get only one if one exists
+  top_2_peaks = order(peaks_obj$P.h, decreasing = T)[1:N_peaks_to_pick] 
+  linear_peak = inv_transf(getPeaks(fwd_transf(mTurq_expr))$Peaks[top_2_peaks])
+  linear_peak
+})
+names(peaks_linear_list) = samples_oi
+
+#arrange in a tibble
+peaks_linear_tib = tibble(exp_name = rep(names(peaks_linear_list), lengths(peaks_linear_list)),
+                          mTurq_peak = unlist(peaks_linear_list))  %>%
+  left_join(samples_oi_tib)
+
+
+#correct, normalize and scale the peak data
+peaks_linear_tib_scaled = peaks_linear_tib %>%
+  left_join(good_clones_tib_norm) %>%
+  mutate(mTurq_peak_cor = mTurq_peak - autofluo_mTurq,
+         mTurq_peak_norm = mTurq_peak_cor/median_GFP_cor,
+         mTurq_peak_rel = mTurq_peak_norm/mTurq_norm_st,
+         mTurq_peak_rel_uncor = mTurq_peak / mTurq_st) %>%
+  #mark the highest peak per sample
+  group_by(exp_name) %>%
+  mutate(highest_peak = mTurq_peak_rel >=  max(mTurq_peak_rel) & is.finite(mTurq_peak_rel),
+         highest_peak_uncor = mTurq_peak_rel_uncor >= max(mTurq_peak_rel_uncor) )
+
+``` 
+
+Plot
+```{r sup_boxplot_CRISPR_clones, fig.width = 6, fig.height = 5}
+#highest peak only
+tib_highest_peak_clones = filter(peaks_linear_tib_scaled, is.na(flowcytometer) | flowcytometer == "analytical" ) %>%
+  filter(GFP_state == "GFP+") %>%
+  filter(flow_experiment %in% c("E2250", "E2254", "E2350", "E2427")) %>%
+  filter((type %in% c("clone", "control") & flow_experiment != "E2427") ) %>%
+  filter(is.na(cell_line) | cell_line != "WT") %>% #cannot be normalized to GFP
+  mutate(landing_pad = factor(landing_pad, levels = c("none", "C9", "23", "8"),
+                               labels = c("no insert", "-161 kb", "-116 kb", "-39 kb")),
+         treatment = factor(treatment, levels  = c("untreated", "delA", "delB"),
+                            labels = c("untreated", "ΔSox2", "ΔCBS_Sox2"))) %>%
+  filter(highest_peak)
+
+
+#adding statistics does not work well for a faceted plot with missing combinations
+#instead I just calculate the statistics separately and then add to the plot
+library("rstatix")  
+test_116 = tib_highest_peak_clones %>%
+  ungroup() %>%
+  filter(landing_pad == "-116 kb") %>%
+  t_test(formula = mTurq_peak_rel ~ treatment,
+         var.equal = F) %>%
+  mutate(landing_pad = "-116 kb")
+         
+test_39 = tib_highest_peak_clones %>%
+  ungroup() %>%
+  filter(landing_pad == "-39 kb") %>%
+  mutate(treatment = factor(treatment, levels = c("untreated", "ΔCBS_Sox2"))) %>%
+  t_test(formula = mTurq_peak_rel ~ treatment,
+         var.equal = F) %>%
+  mutate(landing_pad = "-39 kb")
+
+max_vals_plot = tib_highest_peak_clones %>% 
+    ungroup() %>%
+  group_by(landing_pad, treatment) %>%
+  summarize(max_val = max(mTurq_peak_rel))
+
+stats_tib = bind_rows(test_116, test_39) %>%
+  left_join(max_vals_plot, by = join_by(landing_pad == landing_pad, group2 == treatment)) %>%
+  mutate(adj_y = c(2, 5, 2, 4),
+         y.position = max_val + adj_y)
+
+# make the plot
+ggplot(tib_highest_peak_clones, aes(x = treatment, y = mTurq_peak_rel, col = treatment_for_color)) +
+  facet_nested(.  ~ factor(landing_pad, levels = c("no insert", "-161 kb", "-116 kb", "-39 kb")) , 
+               scales = 'free_x', space = 'free_x') +
+  geom_hline(yintercept = 1, linetype = 'dashed') +
+  geom_hline(yintercept = 0) +
+  #add data
+  geom_boxplot(position = "dodge", outlier.shape = NA)+
+  geom_point(position = position_jitterdodge(jitter.width = 0.6, jitter.height = 0), size = 2.5, alpha = 0.5)+
+  
+  #add statistics
+  stat_pvalue_manual(stats_tib, label = "p") +
+  
+  #layout
+  scale_x_discrete(guide = guide_axis(angle = 90))+
+  scale_y_continuous(expand = expansion(mult = c(0.05, 0.1))) +
+  ylab("relative reporter expression\n(high peak)") +
+  theme_bw(base_size = 14) +
+  theme(legend.position = 'none') +
+  colscale_clones
+
+``` 
+
+## Numbers for text
+```{r}
+
+median_rep_per_treatment = tib_highest_peak_clones %>% 
+  group_by(cell_line, treatment) %>%
+  summarize(median_rel_reporter = median(mTurq_peak_rel))
+
+#change vs untreated, LP23 and LP8
+median_rep_per_treatment %>%
+  filter(cell_line == "23_34A") %>%
+  mutate(change_reporter_vs_untr = median_rel_reporter / filter(median_rep_per_treatment, cell_line == "23_34A" & treatment == "untreated")$median_rel_reporter)
+
+median_rep_per_treatment %>%
+  filter(cell_line == "8_34.8") %>%
+  mutate(change_reporter_vs_untr = median_rel_reporter / filter(median_rep_per_treatment, cell_line == "8_34.8" & treatment == "untreated")$median_rel_reporter)
+
+#deletion LP23 vs LP8
+median_rep_per_treatment %>%
+  filter(cell_line == "23_34A") %>%
+  mutate(del_23_vs_8 = median_rel_reporter / filter(median_rep_per_treatment, cell_line == "8_34.8" & treatment == "ΔCBS_Sox2")$median_rel_reporter)
+
+
+```
+
+#Hopping experiment
+
+## Load data 
+```{r}
+#load the -116kb data (LP23)
+tib_23_all_data = read_tsv(path_tib_23_ints) %>%
+  filter(chr %in% paste0("chr", c(1:19, "X"))) %>%
+  mutate(chr = factor(chr, levels = paste0("chr", c(1:19, "X")))) 
+
+#the control pool in E2285 (rep3) was sequenced as 10 separate libraries, combine them into one sample
+tib_23_E2285_ctrls = tib_23_all_data %>%
+  filter(replicate == "rep3" & insert == "Sox2P" & sample_type == "control pool") %>%
+  mutate(sample_name = "Sox2P-reporter -116 kb, unsorted control pool rep3")%>%
+  group_by(chr, start, end, seq, strand, replicate, experiment, launch_pad_location, insert, genotype, sample_type, sorted_gate, pool_nr, sample_name) %>%
+  summarize(read_count = sum(read_count),
+            read_count_1 = sum(read_count_1),
+            read_count_2 = sum(read_count_2), .groups = "keep") 
+
+tib_23 = tib_23_all_data %>%
+  #select the rest of the data
+  filter(!(replicate == "rep3" & insert == "Sox2P" & sample_type == "control pool")) %>%
+  select(chr, start, end, seq, strand, replicate, experiment, launch_pad_location, insert, genotype, sample_type, sorted_gate, pool_nr, sample_name,
+         read_count, read_count_1, read_count_2)%>%
+  #add merged controls back in
+  bind_rows(tib_23_E2285_ctrls) %>%
+  #mark hopped integrations
+  mutate(hopped = start != 34643961)
+
+#load the -161kb mCh+ data (LP C9)
+tib_C9_mChpos = read_tsv(path_tib_C9_mChpos_ints) %>%
+  filter(chr %in% paste0("chr", c(1:19, "X"))) %>%
+  mutate(chr = factor(chr, levels = paste0("chr", c(1:19, "X")))) %>%
+  #combine the 2 libraries of "Sox2P-reporter -161 kb, population P1 pool1 rep2"
+  mutate(to_merge = case_when(replicate == "rep2" & insert == "Sox2P" & sorted_gate == "P1" ~ "merge",
+                              .default = sample_name)) %>%
+  mutate(sample_name = case_when(to_merge == "merge" ~ "Sox2P-reporter -161 kb, population P1 pool1 rep2",
+                             .default = sample_name)) %>%
+  group_by(chr, start, end, seq, strand, replicate, experiment, launch_pad_location, insert, genotype, sample_type, sorted_gate, pool_nr, sample_name) %>%
+  summarize(read_count = sum(read_count),
+            read_count_1 = sum(read_count_1),
+            read_count_2 = sum(read_count_2), .groups = "keep") %>%
+  #mark hopped integrations
+  mutate(hopped = start != 34598479)
+
+#load the -161kb mCh+ data (LP C9)
+tib_C9_mChneg = read_tsv(path_tib_C9_mChneg_ints) %>%
+  filter(chr %in% paste0("chr", c(1:19, "X"))) %>%
+  mutate(chr = factor(chr, levels = paste0("chr", c(1:19, "X")))) %>%
+  group_by(chr, start, end, seq, strand, replicate, experiment, launch_pad_location, insert, genotype, sample_type, sorted_gate, pool_nr, sample_name) %>%
+  summarize(read_count = sum(read_count),
+            read_count_1 = sum(read_count_1),
+            read_count_2 = sum(read_count_2), .groups = "keep") %>%
+  #mark hopped integrations
+  mutate(hopped = start != 34598479)
+
+```
+combine and filter
+```{r}
+#filter the integrations
+tib_filtered <- bind_rows(tib_23,tib_C9_mChpos, tib_C9_mChneg)  %>%
+  #add variables used in the plotting (old names of cell lines etc) 
+  mutate(population = case_when(sample_type == "control pool" ~ "ctrl",
+                                .default = sorted_gate),
+         cell_line = case_when(launch_pad_location == "-116 kb" & insert == "Sox2P" ~ "23_34A",
+                               launch_pad_location == "-161 kb" & insert == "Sox2P" & genotype == "WT" ~ "C9_mCh_34",
+                               launch_pad_location == "-161 kb" & insert == "Sox2P" & genotype == "Sox2::mCherry deleted" ~ "C9_mCh-_34"
+                               ),
+         landing_pad = case_when(launch_pad_location == "-116 kb" ~ "23",
+                                 launch_pad_location == "-116 kb" ~ "C9")) %>%
+  #annotate confidence of mapping (one or both ITRs)
+  mutate(mapped_arms = case_when(read_count_1 == 0 ~ "rv_only",
+                                 read_count_2 == 0 ~ "fw_only",
+                                 read_count_1 > 0 & read_count_2 > 0 ~ "both_arms")) %>%
+  
+  #filter the data
+  filter(population == "ctrl" | read_count >= 2) %>% #for ctrl distribution 1 mapping read is enough
+  filter(!(start >= 34721183 & start <= 34721192)) %>% #remove contamination from LP8
+  filter(! start %in% c(25018987, 35232946) ) %>% #remove contamination clone C1
+  filter(strand %in% c("+", "-")) 
+
+tib_filtered_P1_strict = tib_filtered %>%
+  filter(!(population == "P1" & mapped_arms != "both_arms")) #only keep P1 integrations with 2 mapped arms
+
+all_exp = unique(tib_filtered_P1_strict$experiment)
+```
+
+
+## Beeswarm C9_mCh-_34
+
+```{r D_beeswarm_C9_mChneg_34, fig.width = 6, fig.height = 4.5}
+P_RANGE =  c(34.5E6, 34.9E6)
+
+tib_for_plot = filter(tib_filtered_P1_strict, 
+                      hopped & chr == "chr3" & 
+                        cell_line %in% c("C9_mCh-_34", "C9_mCh_34", "23_34A")  &
+                        start >= P_RANGE[1] & start <= P_RANGE[2]) %>%
+  mutate(cell_line = case_when(
+    cell_line %in% c("23_34A", "C9_mCh_34") ~ "mChpos_34",
+    .default = cell_line)) %>%
+  mutate(CL_population = paste0(cell_line, "_", population)) %>%
+  filter(cell_line == "C9_mCh-_34" | population %in% c("P1", "P6"))
+
+LP_tib_cl = tibble(cell_line = c("C9_mCh-_34", "mChpos_34", "mChpos_34"),
+                   start = c(start(landingPad_C9), 
+                                   start(landingPad_23),
+                                   start(landingPad_C9)))
+  
+PLOT_ANNOT = T
+
+plot_beesw_comb = ggplot(filter(tib_for_plot),
+       aes(x = start, y = population, col = CL_population)) +
+  facet_grid(cell_line ~ ., scales = 'free_y', space = 'free') +  #only facet when necessary
+  
+  list( #add elements in a list, you cannot use + inside an if statement
+    # annotate enhancer
+    geom_vline(xintercept = c(start(enhancer), end(enhancer)), col = brown),
+    annotate("rect", xmin = start(enhancer), xmax = end(enhancer), ymin = -Inf, ymax = Inf, alpha = .2, fill = brown),
+    # annotate gene
+    annotate("rect", xmin = start(Sox2_gene), xmax = end(Sox2_gene), ymin = -Inf, ymax = Inf, alpha = .2, fill = 'red'),
+    geom_vline(xintercept = c(start(Sox2_gene), end(Sox2_gene)), col = 'red')) +
+
+geom_vline(data = LP_tib_cl, aes(xintercept = start), col = 'darkgrey') +
+  
+  # # annotate CTCFs
+  geom_vline(xintercept = start(CTCF_mm10.chr3_extra), col = 'darkgrey', lty="11") +
+  
+  #annotate landing pad
+  labs(x='Genomic coordinate (Mb)',y='sorted gate') +
+    
+    #datapoints
+    geom_quasirandom(alpha = 0.5, size = 1.5, varwidth = T, bandwidth = 0.8,
+                     # shape = 16, #changes to point without border, so alpha applies to the whole point
+                     method = "quasirandom",
+                     stroke = NA) +
+    geom_text(data = plyr::count(tib_for_plot, vars = c("cell_line", "population")), aes(label = paste("n = ", freq, sep = ""),
+                                                                                         x = Inf),
+              hjust = "inward", vjust = "top",
+              col = 'black') +
+    #layout:
+    theme_classic(base_size = 16) +
+    theme(legend.position = "none") +
+    scale_x_continuous(breaks = scales::pretty_breaks(n = 6), labels = scales::unit_format(scale = 1E-6, accuracy = 0.01, unit=NULL),
+                       limits=P_RANGE, expand=c(0,0)) +
+    scale_y_discrete(limits = rev) +
+    colScale_pop_CL
+plot_beesw_comb
+```
+we estimated the borders based on the P6 integrations, plot these estimated borders on the beeswarm
+```{r}
+
+plot_beesw_comb +
+  geom_vline(xintercept = c(34594566, 34805249), col = "#9c2261") + #estimated borders after Sox2 deletion
+  geom_vline(xintercept = c(34780523, start(landingPad_23)), col = "#212B71") #estimated original borders
+
+```
+
+calculate old and new domain size (and distances of the borders from the gene/SCR)
+```{r}
+P6_upstr = start(Sox2_gene) - 34594566
+P6_upstr / 1E3
+P6_downstr = 34805249 - end(enhancer)
+P6_downstr
+
+old_domainsize = 34780523 - start(landingPad_23) #first P6 after SCR as border, use LP as upstr border (there are P6 closer but there are just a lost of integrations there)
+new_domainsize = 34805249 - 34594566
+
+new_domainsize / old_domainsize
+```
+
+
+### Orientation CTCF sites
+Plotting triangles in a pdf is a nightmare, so instead 1 just make one plot with the CTCF lines colored by orientation and based on that add the CTCF triangles manually to the paper figures.
+
+```{r}
+ggplot() +
+   # annotate enhancer
+  # annotate("rect", xmin = start(enhancer), xmax = end(enhancer), ymin = -Inf, ymax = Inf, alpha = .2, fill = brown)+
+  geom_vline(xintercept = c(start(enhancer), end(enhancer)), col = brown)+
+  # annotate gene
+  # annotate("rect", xmin = start(Sox2_gene), xmax = end(Sox2_gene), ymin = -Inf, ymax = Inf, alpha = .2, fill = 'red')+
+  geom_vline(xintercept = c(start(Sox2_gene), end(Sox2_gene)), col = 'red') +
+  
+  
+  geom_vline(data = as_tibble(CTCF_mm10.chr3_extra), aes(xintercept = start, col = strand), size = 2, lty = 'dashed') +
+  scale_x_continuous(breaks = scales::pretty_breaks(n = 6), labels = scales::unit_format(scale = 1E-6, accuracy = 0.01, unit=NULL),
+                     limits=c(P_RANGE), expand=c(0,0)) +
+  theme_bw()
+
+```
+
+## FACS hopping
+### load FACSDiva file
+```{r}
+library(openCyto) 
+library(CytoML)
+library(flowWorkspace)
+
+
+diva_ws <- open_diva_xml(diva_xml_file)
+  
+
+gs <- diva_to_gatingset(diva_ws,
+                        name = 1, #the group to import
+                        path = path_FACS_sorting_E2555,
+                        #swapped columns are a known diva 'bug', for some files you need to 'unswap' them, default is T (as necessary for this file)
+                        # swap_cols = F,
+                        worksheet = "global",
+                        verbose = F,
+                        execute = T)
+
+pdata_tib = pData(gs) %>%
+  as_tibble() %>%
+  mutate(name_short = str_remove(str_remove(name, "ME2024050._E2534_rep._"), "_([0-9]){3}.fcs"),
+         replicate = str_extract(name_short, "rep.$"),
+         cell_line = case_when(grepl("WT", name_short) ~ "WT",
+                               grepl("F121_9", name_short) ~ "F121_9",
+                               grepl("23_34A", name_short) ~ "23_34A",
+                               .default = str_extract(name_short, "C9_.._mCh.")),
+         
+         treatment = case_when(grepl("PB", name_short) ~ "PB",
+                               grepl("SB", name_short) ~ "SB",
+                               .default = "untreated"),
+         recording = case_when(grepl("_SORT", name_short) ~ "sorting",
+                               .default = "pre-recording"),
+         sample_type = case_when(cell_line %in% c("WT", "F121_9", "23_34A") | treatment == "untreated" ~ "control",
+                                 .default = "sample")
+  ) %>%
+  mutate(construct = case_when(cell_line %in% c("WT", "F121_9") ~ "none",
+                                cell_line == c("23_34A") ~ "34",
+                                .default = str_extract(cell_line, "([0-9]){2}")),
+         mCh_status = case_when(cell_line == "WT" ~ "mCh-",
+                                cell_line %in% c("23_34A", "F121_9") ~ "mCh+",
+                                .default = str_extract(cell_line, "mCh.")))
+
+
+pdata_df = as.data.frame(pdata_tib)
+rownames(pdata_df) = pdata_df$name
+
+pData(gs) = pdata_df
+```
+
+```{r, sup_plot_FACS_hop_mChneg_34, height = 3, width = 6}
+gs_oi_mChneg = subset(gs, sample_type == "sample"  & mCh_status == "mCh-" & construct == "34" &
+                        (recording == "sorting" | treatment == "PB")) #sorting only, combining 2 data sets doesn't give the right percentages on the gates
+
+ggcyto::ggcyto(gs_oi_mChneg, aes(x = "GFP", y = "mTurqoise2"), subset = "mCh_neg") +
+  #facet by cell line / treatment
+  facet_grid(cell_line ~ treatment) +
+  
+  #plot cells
+  geom_hex(bins = 128, aes( fill = after_stat(ncount))) +
+  scale_fill_distiller(palette = 'Spectral') + #manually adding a fill scale also forces the scale to be linear again.
+  
+  #plot_gates
+  ggcyto::geom_gate(paste0("P", 1:6, "_mCh-"), col = 'black') +
+  ggcyto::geom_stats(adjust = c(-0.3, 0.5), digits = 2, size = 3) +
+    
+  #layout
+  theme_bw(base_size = 14) +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        legend.position = "none",
+        aspect.ratio = 1) +
+  ggtitle(element_blank())+
+  ggcyto::axis_x_inverse_trans() +
+  ggcyto::axis_y_inverse_trans() +
+  ggcyto::ggcyto_par_set(limits = list(x = c(1.2, 4), y = c(0, 4.2))) +
+  scale_y_continuous(expand = c(0,0)) +
+  scale_x_continuous(expand = c(0,0))+
+  ggcyto::labs_cyto(labels = "marker")
+
+```
