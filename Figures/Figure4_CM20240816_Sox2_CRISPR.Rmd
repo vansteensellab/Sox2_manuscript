@@ -19,7 +19,7 @@ Plot the figure panels relating to the CRISPR deletion of Sox2, from the sorting
 
 ## Notes for re-running
 To re-run this code, change the paths in 'File paths' to the correct location of datasets.
-
+The file paths of the fcs files are hardcoded in the annotation of the clones (). To re-run the analysis of those clones, adapt the chunk 'load_fcs_data_clones' to point directly to the path you stored these fcs files (paste0(/your/own/path/,fcs_files_E2350$filename)).
 
 # setup
 ## libraries
@@ -97,7 +97,6 @@ path_fcs_E2211 = '/DATA/usr/c.moene/projects/Hopping_Sox2_mTurq/E2211_CRISPR_Sox
 path_fcs_WT_E2263_1 = "/DATA/usr/c.moene/projects/Hopping_Sox2_mTurq/E2263_CRISPR_Sox2_del_2/fcs_for_R/export_me20230627_E2263_WT_neg_ctrl_001_Single Cells.fcs"
 path_fcs_WT_E2263_2 = "/DATA/usr/c.moene/projects/Hopping_Sox2_mTurq/E2263_CRISPR_Sox2_del_2/fcs_for_R/export_me20230630_E2263_WT_neg_ctrl_001_Single Cells.fcs"
 
-path_annotation_clones_E2427 = "/DATA/usr/c.moene/projects/Hopping_Sox2_mTurq/Combined_for_paper/clonal_data_combined/CM20240307_E2427_annotation_tib.rds"
 path_annotation_clones_E2350 = "/DATA/usr/c.moene/projects/Hopping_Sox2_mTurq/E2350_generating_CRISPR_clones/CM20240221_E2350_fcs_files_tib.rds"
 
 #hopping data
@@ -457,16 +456,12 @@ dens_plot_LP_untreated_gated
 ## load CRISPR clones
 
 ```{r wrangle_fcs_tib_clones}
-
-matched_annotation_tib_E2427 = readRDS(path_annotation_clones_E2427)
-
-
 fcs_files_E2350 = readRDS(path_annotation_clones_E2350) %>%
   #remove the WT samples that were measured on a different day (labeled here as E2250, but were actually measured in E2254)
   filter(!name %in% c(paste0('E2250_WT_untreated_none_E', 10:12))) %>%
 
   mutate(flow_experiment = experiment) %>%
-  filter(!cell_line == "C10_34" ) %>%
+  filter(!cell_line == "C10_34" & !cell_line == "C1_34") %>%
   mutate(GFP_state = case_when(sorted_phenotype == "GFP-" ~ "GFP-",
                                cell_line == "WT" ~ "GFP-",
                                .default = "GFP+"),
@@ -493,9 +488,15 @@ fcs_files_E2350 = readRDS(path_annotation_clones_E2350) %>%
                                          .default = treatment))%>%
   mutate(cell_line_treatment = paste0(cell_line, "_", treatment)) %>%
   
-  #only include the treatments relevant here:
-  filter(treatment %in% c('untreated', 'delA', 'delB')) %>%
-  mutate(treatment = factor(treatment, levels = c('untreated', 'delA', 'delB')))
+  #only include the treatments & sortings relevant here:
+  filter(treatment %in% c('untreated', 'delA', 'delB') &
+           sorted_phenotype %in% c("mCh-_mT+", "none")) %>%
+  mutate(treatment = factor(treatment, levels = c('untreated', 'delA', 'delB'))) %>%
+  #for deletions only include correctly genotyped clones
+  filter((is.na(PCR_band_deletion) | PCR_band_deletion) & 
+           (is.na(PCR_band_intact_allele) | PCR_band_intact_allele)) %>%
+  #add short filename
+  mutate(filename = str_remove(file, '^.*/'))
   
 
 ```
@@ -511,6 +512,13 @@ flowset = flowCore::read.flowSet(files = fcs_annotation_E2350_df$file, alter.nam
                                  column.pattern = 'BL.B..530_30.A|YG.D..610_20.A|V.F..450_50.A|FSC.A|SSC.A'
                                  #samples from sorter have different fluorophores, only take the shared ones
 )
+
+## to run this when files are in a different folder (all in one folder, called MyFolder), run:
+# flowset = flowCore::read.flowSet(files = paste0(MyFolder, "/", fcs_annotation_E2350_df$filename), alter.names = T, truncate_max_range = F, 
+#                                  ignore.text.offset = T, 
+#                                  column.pattern = 'BL.B..530_30.A|YG.D..610_20.A|V.F..450_50.A|FSC.A|SSC.A'
+#                                  #samples from sorter have different fluorophores, only take the shared ones
+# )
 
 
 flowCore::sampleNames(flowset) = fcs_annotation_E2350_df$exp_name
