@@ -1044,7 +1044,7 @@ tib_filtered <- bind_rows(tib_23,tib_C9_mChpos, tib_C9_mChneg)  %>%
                                launch_pad_location == "-161 kb" & insert == "Sox2P" & genotype == "Sox2::mCherry deleted" ~ "C9_mCh-_34"
                                ),
          landing_pad = case_when(launch_pad_location == "-116 kb" ~ "23",
-                                 launch_pad_location == "-116 kb" ~ "C9")) %>%
+                                 launch_pad_location == "-161 kb" ~ "C9")) %>%
   #annotate confidence of mapping (one or both ITRs)
   mutate(mapped_arms = case_when(read_count_1 == 0 ~ "rv_only",
                                  read_count_2 == 0 ~ "fw_only",
