@@ -60,8 +60,7 @@ split_string <- function(vect,sep,N1,N2=N1){
   },USE.NAMES = F)
 }
 
-source("/DATA/projects/Sox2/General_functions/CM20240621_general_plotting_functions.R")
-source("/DATA/projects/Sox2/General_functions/CM20240626_expression_score_functions.R")
+
 ```
 
 # Paths & parameters
@@ -123,6 +122,10 @@ path_link_well_clonename_E2221 = "/DATA/usr/c.moene/projects/Hopping_Sox2_mTurq/
 path_fcs_files_E2221 = '/DATA/usr/c.moene/projects/Hopping_Sox2_mTurq/E2217_FACS_clones/gated_fcs_files/plate_reader'
 
 path_WT_ctrl_E2250 = "/DATA/usr/c.moene/projects/Hopping_Sox2_mTurq/E2250_CRISPR_Sox2_delBclones_pools/fcs_for_R/export_ME20230418_E2250_pools_WT_001_Single Cells.fcs"
+
+#functions
+source("/DATA/projects/Sox2/General_functions/CM20240621_general_plotting_functions.R")
+source("/DATA/projects/Sox2/General_functions/CM20240626_expression_score_functions.R")
 ```
 
 
