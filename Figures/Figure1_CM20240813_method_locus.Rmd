@@ -1,5 +1,5 @@
 ---
-title: "Figure1_CM20240815_method_locus"
+title: "Figure1_CM20240820_method_locus"
 author: "Mathias & Christine"
 date: "2024-08-15"
 output: 
@@ -196,6 +196,18 @@ chain_mm10_to_mm39 = import.chain(path_mm10_to_mm39)
 
 ```
 
+liftover the mm10 x-axis to mm39
+```{R}
+mm10_axis_vc = seq(34.50, 35, by = 0.05)
+
+mm10_axis= GRanges(seq = "chr3",
+                   IRanges(start = mm10_axis_vc*1E6,
+                           end = mm10_axis_vc*1E6),
+                   names = mm10_axis_vc)
+
+mm39_axis = unlist(liftOver(mm10_axis, chain_mm10_to_mm39))
+```
+
 
 ## Load RCMC data
 ```{r}
@@ -206,8 +218,7 @@ RCMC_1kb = load_contacts(signal_path = path_RCMC_WT_file,
 ```
 
 
-
-
+## Pyramid plot
 ```{r B_RCMC_pyramid_annotated, fig.width = 7.2, fig.height = 3}
 #plotting range on mm39
 plot_range_hiC = c(34.65E6,
@@ -236,6 +247,50 @@ p +
   geom_segment(data = CTCF_ROI_mm39_tib, aes(x = start, xend = start, col = strand), y = -30E3, yend = -10E3) 
 
 ```
+
+## Insulation plot
+on the 1kb resolution data (as in pyramid plot), 20kb window
+
+```{r, B2_RCMC_insulation_score, fig.width = 7.2, fig.height = 3}
+
+ins_score_20 = insulation_score(RCMC_1kb,
+                        window = 20,
+                        norm_to = 'none')
+
+#at mm39 34.9Mb a gap in the data starts (filtered out because there are not capture probes), the insulation score calculation does not 'understand' this, so any window that covers this will be wrong/weird
+#therefore, I filter out the insulation score within 20kb (window size) from that gap:
+filter(ins_score_20$insula_score, chrom == "chr3" ) %>%
+  filter(start <= 34.9E6 - 20E3) %>%
+  mutate(mid_bin = (start + end)/2) %>%
+
+  ggplot(aes(x = mid_bin, y = WT)) +
+  #add insulation score
+  geom_line() +
+  # annotate gene
+  geom_vline(xintercept = c(start(annotation_gr_mm39[1]), end(annotation_gr_mm39[1])), col = 'red') +
+  # annotate enhancer
+  geom_vline(xintercept = c(start(annotation_gr_mm39[2]), end(annotation_gr_mm39[2])), col = "#ffb000") +
+  
+  #annotate CTCF sites
+  geom_rug(data = CTCF_ROI_mm39_tib, aes(x = start, col = strand), inherit.aes=F, sides = 't')+
+  # geom_vline(data = CTCF_ROI_mm39_tib, aes(xintercept = start, col = strand), linetype = 'dashed')+
+  
+  #annotate the mm10 axis
+  geom_rug(data = as_tibble(mm39_axis), aes(x = start), inherit.aes = F) +
+  
+  #layout
+  scale_x_continuous(breaks = scales::pretty_breaks(n = 6), 
+                     labels = scales::unit_format(scale = 1E-6, accuracy = 0.05, unit=NULL),
+                     limits=plot_range_hiC, expand = c(0,0)) +
+  scale_y_continuous(limits = c(0, 500), expand = c(0,0)) +
+  labs(x = 'mid_bin on mm39', y = 'insulation_score') +
+  theme_classic() +
+  theme(legend.position = 'none')
+
+
+```
+
+
 # Distribution of integrations
 ## unstranded
 ```{r C_histogram_integrations_nonstranded, fig.width= 6, fig.height=3}
