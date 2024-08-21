@@ -182,7 +182,7 @@ tib_filtered <- bind_rows(tib_23,tib_C9)  %>%
          cell_line = case_when(launch_pad_location == "-116 kb" & insert == "Sox2P" ~ "23_34A",
                                launch_pad_location == "-161 kb" & insert == "Sox2P" ~ "C9_mCh_34"),
          landing_pad = case_when(launch_pad_location == "-116 kb" ~ "23",
-                                 launch_pad_location == "-116 kb" ~ "C9")) %>%
+                                 launch_pad_location == "-161 kb" ~ "C9")) %>%
   #annotate confidence of mapping (one or both ITRs)
   mutate(mapped_arms = case_when(read_count_1 == 0 ~ "rv_only",
                                  read_count_2 == 0 ~ "fw_only",
@@ -261,7 +261,7 @@ landingPad_C9 <- GRanges(seqnames = "chr3",
                                      end = 34598480),
                     strand = "+")
 
-LP_tib = tibble(landing_pad = c("LP23", "LPC9"), 
+LP_tib = tibble(landing_pad = c("23", "C9"), 
                 start = c( start(landingPad_23),start(landingPad_C9)))
 
 #CTCF sites based on our own mapping
@@ -328,6 +328,8 @@ plot_beeswarm_only = function(TIB, CL = "23_34A", EXP = all_exp, P_RANGE = prang
         # annotate gene
         annotate("rect", xmin = start(Sox2_gene), xmax = end(Sox2_gene), ymin = -Inf, ymax = Inf, alpha = .2, fill = 'red'),
         geom_vline(xintercept = c(start(Sox2_gene), end(Sox2_gene)), col = 'red') )} +
+    
+     #annotate landing pad
     {if(PLOT_ANNOT & length(CL)== 1)
       geom_vline(xintercept = pull(
         filter(LP_tib, landing_pad %in% unique(tib_for_plot$landing_pad)), 
@@ -342,8 +344,7 @@ plot_beeswarm_only = function(TIB, CL = "23_34A", EXP = all_exp, P_RANGE = prang
                                        aes(x = range),
                                        fill = 'grey',
                                        inherit.aes = F)}+
-     #annotate landing pad
-    labs(x='Genomic coordinate (Mb)',y='sorted gate') +
+    
     
     #datapoints
     geom_quasirandom(alpha = 0.5, size = POINT_SIZE, varwidth = T, bandwidth = 0.8,
@@ -354,7 +355,9 @@ plot_beeswarm_only = function(TIB, CL = "23_34A", EXP = all_exp, P_RANGE = prang
                                                                                          x = Inf),
               hjust = "inward", vjust = "top",
               col = 'black') +
+    
     #layout:
+    labs(x='Genomic coordinate (Mb)',y='sorted gate') +
     theme_classic(base_size = 16) +
     theme(legend.position = "none") +
     scale_x_continuous(breaks = scales::pretty_breaks(n = 6), labels = scales::unit_format(scale = 1E-6, accuracy = 0.01, unit=NULL),
