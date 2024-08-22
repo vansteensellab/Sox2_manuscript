@@ -1,9 +1,10 @@
 # Sox2_manuscript
+This repository contains the scripts and pipelines used in the manuscript "Functional maps of a genomic locus reveal confinement of an enhancer by its target gene" by Eder et al. 
 
 ## Introduction
 In this study we investigated the Sox2 genomic locus in mESCs to better understand the positional relationship between the mouse Sox2 gene and its distal enhancer. We created high-resolution functional maps of the locus by relocating different Sox2-reporters to >1,000 alternative positions. 
 
-Repository guide
+## Repository guide
 This repository contains information about 
 - Tagmentation: Tn5_tagmentation mapping (pipeline)
     - including all config files used for the data in the paper 
