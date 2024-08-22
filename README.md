@@ -7,7 +7,9 @@ Repository guide
 This repository contains information about 
 - Tagmentation: Tn5_tagmentation mapping (pipeline)
     - including all config files used for the data in the paper 
-- ChIP: CTCF ChIP-seq analysis (pipeline)
-- Analysis: various steps of preliminary analysis (between Tagmentation mapping and figure generation)
+- Analysis: 
+    - assignment of locations to clones (between Tagmentation mapping and figure generation)
+    - some annotation tables (in Data)
+    - CTCF ChIP seq analysis
 - General functions: includes the calculation of expression score
 - Figures: R markdown files to create paper figures
