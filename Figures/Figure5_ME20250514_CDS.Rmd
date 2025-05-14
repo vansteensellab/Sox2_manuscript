@@ -1,0 +1,2591 @@
+---
+title: "Figure5_CM20250325_Sox2_CDS"
+author: "Mathias & Christine"
+date: "2025-03-25"
+output: 
+  html_document:
+    theme: journal #cerulean
+    highlight: monochrome
+    toc: true
+    toc_float: true
+    code_folding: show
+  editor_options:
+    chunk_output_type: console
+---
+# Goal
+Make the manuscript figures about the Sox2 CDS swapping (currently figure 5) and hopping for the revised manuscript.
+
+Figure panel S5A (reduction in mCherry expression in SoxP insertion clones, originally 5A) is generated in the code for figure 2.
+
+
+## Notes for re-running
+To re-run this code, change the paths in 'File paths' to the correct location of datasets.
+The expression scores are bootstrapped 5000 times, which takes a while to run. Therefore, these chunks are commented out and the bootstrapped data is loaded from a local RDS file. To re-run those, run the bootstrapped expression score calculation once and save the result locally. The bootstrapped expression score for the Sox2P reporter is calculated (and saved) in the scripts for figure 2.
+
+
+# Setup
+```{r load_libraries}
+
+# Load dependencies
+library(GenomicRanges)
+library(rtracklayer)
+library(tidyverse)
+# library(dtplyr)
+library(dplyr)
+# library(tidyr)
+library(ggbeeswarm)
+library(ggplot2)
+library(Biostrings)
+library(stringr)
+library(readr)
+library(knitr)
+library(RColorBrewer)
+library(RcppRoll)
+# library(plotly)
+library(readxl)
+library(ggpubr)
+library(ggpmisc)
+library(ggridges)
+library(import)
+library(ggh4x)
+library(rstatix)
+# library(flowCore)
+import::from(flowCore, .except=c("filter")) #I don't load the whole flowCore and ggcyto libraries, because they overwrite dplyr's filter function :0
+import::from(ggcyto, 'fortify_fs')
+library(flowDensity)
+library(cowplot)
+library(GENOVA)
+library(Signac)
+
+split_string <- function(vect,sep,N1,N2=N1){
+  library(stringr)
+  sapply(vect, function(X){
+    paste(str_split(X,sep)[[1]][N1:N2],collapse = sep)
+  },USE.NAMES = F)
+}
+
+
+```
+
+```{r paths_parameters}
+#datatag
+datetag = paste0("CM",format(Sys.time(), '%Y%m%d'))
+
+# Prepare output 
+output_dir <- paste0("/DATA/projects/Sox2/Figure_Sox2_CDS/analysis_", datetag)
+dir.create(output_dir, showWarnings = FALSE)
+
+library(knitr)
+opts_chunk$set(
+               cache = T,
+               message = F, 
+               warning = F,
+               dev=c('png', 'pdf'), 
+               dpi = 600,
+               fig.path = file.path(output_dir, "figures/")) 
+pdf.options(useDingbats = FALSE)
+```
+
+## File paths
+```{r}
+path_CTCF_sites = "/DATA/usr/v.franceschini/Workspaces/2024_01_MATHIAS_CTCF_PEAKS/VF240812_calling_CTCF_motifs_again/02_OUTPUTS/CTCF_sites/6764_2_ME_E2_CGATGT_S2_R1_001_peaks_motifs.bed"
+
+path_annotation_E2410 = "/DATA/usr/m.eder/projects/FACS_data/E2410/E2410_me20231219_plate_reader/me20232323_annotation_file.tsv"
+path_fcs_files_E2410 = '/DATA/usr/m.eder/projects/FACS_data/E2410/E2410_me20231219_plate_reader/export_fcs_single_cells/'
+
+path_annotation_E2427 = "/DATA/usr/c.moene/projects/Hopping_Sox2_mTurq/E2427_Sox2_CDS_swap/CM20240226_E2427_annotation_table_clones_pools.xlsx"
+path_fcs_files_E2427 = '/DATA/usr/c.moene/projects/Hopping_Sox2_mTurq/E2427_Sox2_CDS_swap/fcs_for_R'
+
+path_annotation_E2447 = "/DATA/usr/c.moene/projects/Hopping_Sox2_mTurq/E2447_C9_mCh+_41_clones/CM20240226_E2447_annotation_table_clones.xlsx"
+path_fcs_files_E2447 = '/DATA/usr/c.moene/projects/Hopping_Sox2_mTurq/E2447_C9_mCh+_41_clones/fcs_for_R'
+
+
+path_annotation_E2742 = '/DATA/usr/c.moene/projects/Hopping_Sox2_mTurq/E2742_23_mChpos_CDS_flipped_clones/CM20250225_E2742_final_PCR_genotyping.txt'
+path_fcs_files_E2742 = '/DATA/usr/c.moene/projects/Hopping_Sox2_mTurq/E2742_23_mChpos_CDS_flipped_clones/fcs_for_R'
+
+
+path_annotation_E2759 = '/DATA/usr/c.moene/projects/Hopping_Sox2_mTurq/E2759_mChneg_CDS_flipped_clones/CM20250324_E2759_genotyping.xlsx' 
+path_fcs_files_E2759_round3 = '/DATA/usr/c.moene/projects/Hopping_Sox2_mTurq/E2759_mChneg_CDS_flipped_clones/fcs_for_R/fcs_round3' 
+
+
+#hopping
+path_tib_C9_34_ints = "/DATA/projects/Sox2/GEO_collection/Tagmentation/mapped_integrations_-161kb_Sox2P_pools.txt"
+path_tib_C9_41_ints = "/DATA/projects/Sox2/GEO_collection/Tagmentation/mapped_integrations_-161kb_Sox2P_CDS_pools.txt"
+
+path_median_mTurq_relevant_cell_lines =  "/DATA/projects/Sox2/Figure_reporter_only_hopping/CM20250318_median_mTurq_sorting_for_paper.tsv"
+path_sorting_stats = "/DATA/projects/Sox2/Figure_reporter_only_hopping/CM20250327_stats_for_expression_score_for_paper.xlsx"
+
+path_expr_score_bootstrap_C9_mCh_34 = "/DATA/projects/Sox2/Figure_reporter_only_hopping/rds_files/CM20250327_new_expression_score_sum_filt_C9_mCh_34_5kb.rds"
+
+#sorting data hopping
+diva_xml_file = "/DATA/usr/c.moene/projects/Hopping_Sox2_mTurq/E2534_hopping_C9_LP/FACS/Mathias (BvS)20240501_E2534_rep1.xml"
+diva_xml_file2 = "/DATA/usr/c.moene/projects/Hopping_Sox2_mTurq/E2534_hopping_C9_LP/FACS/Mathias (BvS)20240502_E2534_rep2.xml"
+path_FACS_sorting_E2555 =  "/DATA/usr/c.moene/projects/Hopping_Sox2_mTurq/E2534_hopping_C9_LP/FACS"
+
+#RNA stability
+path_qPCR_RNA_stability = "/DATA/projects/Sox2/Figure_Sox2_CDS/me20241217_E2682_all_rep_combined.xlsx"
+
+#ChIP
+path_JASPAR_motifs = '/DATA/projects/Sox2/Figure_Sox2_CDS/JASPAR2024_CORE_vertebrates_redundant_pfms_jaspar.txt'
+path_JASPAR_mapped_motifs_Sox2 = '/DATA/projects/Sox2/Figure_Sox2_CDS/JASPAR2024_chr3_34630000-34680000'
+path_cistrome_overview_table = '/DATA/projects/Sox2/cistrome_mm10/mouse_factor_full_QC.txt'
+path_cistrome_peak_folder = "/DATA/projects/Sox2/cistrome_mm10/mouse_factor/"
+path_cistrome_bw_folder ='/DATA/projects/Sox2/cistrome_bw/'
+path_H3K27ac_ChIP = "/DATA/usr/c.moene/public_data/ChIP/Histons/H3K27ac_ENCFF583WVZ_signal_pval.bigWig"
+
+
+#functions
+source("/DATA/projects/Sox2/General_functions/CM20250318_new_expression_score_functions.R")
+
+
+```
+
+# Annotations
+## color settings
+```{r color_settings}
+#colors for hopped integrations (P1-P6)
+myCols_blue = c('#525252', "#080E5B",  "#212B71", "#3A4987", "#465893", "#5A719A", "#6C8AA0")
+
+myCols_orange = c('#525252' ,'#a0430d', "#bb4e10", '#ec6518',  '#EE7733', "#f1925c", '#f3a070', '#e8aa86')
+colScale7_orange <- scale_colour_manual(name = "population", values = myCols_orange, aesthetics = c("colour", "fill"))
+
+#colors for the different inserts
+myCols_inserts_named = c(`minimal insert` = "grey30", HyTK= "grey50", none = "black",
+                   `Sox2P` = '#0077BB', `Sox2P_CDS_UTR`='#bd4d0e' , `Sox2P_CDS`= '#EE7733' )
+col_scale_CDS_named = scale_colour_manual(name = "reporter", values = myCols_inserts_named,
+                                          aesthetics = c("colour", "fill"))
+
+myCols_insert_groups = c(`minimal insert` = "grey30", none = "black",
+                   `Sox2P` = '#0077BB', `Sox2P_CDS_UTR`='#bd4d0e' , `Sox2P_CDS`= '#EE7733' )
+col_scale_CDS_groups = scale_colour_manual(name = "insert_group", values = myCols_insert_groups,
+                                          aesthetics = c("colour", "fill"))
+
+
+myCols_insert_cell_lines = c(`C9_mCh_34` = '#0077BB', `C9_mCh_41` = '#EE7733'  )
+col_scale_CDS_cl = scale_colour_manual(name = "cell_line", values = myCols_insert_cell_lines,
+                                    aesthetics = c("colour", "fill"))
+
+myCols_insert_cell_lines_FACS = myCols_insert_cell_lines
+names(myCols_insert_cell_lines_FACS) = c('C9_34_mCh+' , 'C9_41_mCh+')
+col_scale_CDS_cl_FACS = scale_colour_manual(name = "cell_line", values = myCols_insert_cell_lines_FACS,
+                                    aesthetics = c("colour", "fill"))
+
+
+
+## SCR
+brown = "#ffb000"
+```
+
+## Locations
+```{r genomic_annotations}
+
+# Location of enhancer / gene
+enhancer <- GRanges(seqnames = "chr3", 
+                    ranges = IRanges(start = 34753415,
+                                     end = 34766401),
+                    strand = "*")
+Sox2_gene <- GRanges(seqnames = "chr3", 
+                    ranges = IRanges(start = 34649995,
+                                     end = 34652461),
+                    strand = "+")
+
+landingPad_23 <- GRanges(seqnames = "chr3", 
+                    ranges = IRanges(start = 34643960,
+                                     end = 34643962),
+                    strand = "+")
+
+landingPad_C9 <- GRanges(seqnames = "chr3", 
+                    ranges = IRanges(start = 34598479,
+                                     end = 34598480),
+                    strand = "+")
+
+LP_tib = tibble(landing_pad = c("23", "C9"), 
+                start = c( start(landingPad_23),start(landingPad_C9)))
+
+#CTCF sites based on our own mapping
+CTCF_mm10 <- import.bed(path_CTCF_sites)
+CTCF_mm10.chr3 <- CTCF_mm10[seqnames(CTCF_mm10)== 'chr3']
+# add the missing site after the SCR
+CTCF_mm10.chr3_extra = sort(c(CTCF_mm10.chr3,
+                         GRanges(seqnames = "chr3",
+                                 IRanges(start = 34772210, end = 34772210),
+                                 strand = "+")),
+                         ignore.strand = T)
+
+# Plotting ranges
+prange_zoom = c(34.5E6, 35E6)
+prange_zoom_paper = c(34.59E6, 34.83E6)
+
+```
+## others
+```{r}
+N_bootstrap = 500
+```
+
+
+# Load data 
+## process annotations
+### E2410
+```{r load_E2410}
+
+annotation_file_E2410 = read_tsv(path_annotation_E2410)
+
+
+fcs_files_E2410_plateReader = dir(path_fcs_files_E2410, full.names = T)
+names(fcs_files_E2410_plateReader) = str_remove(str_remove(str_remove(fcs_files_E2410_plateReader, '.*/'),"_Single Cells.fcs"), "export_")
+
+
+matched_annotation_tib_E2410 = tibble(filenames = names(fcs_files_E2410_plateReader),
+                                      full_filename = fcs_files_E2410_plateReader,
+                                      # N_char = str_length(filenames),
+                                      well_tmp = str_extract(filenames, "..._...$"),
+                                      row = substr(well_tmp, 1, 1),
+                                      col = as.numeric(substr(well_tmp, 2, 3)),
+                                      well = paste0(row, col),
+                                      WELL = substr(well_tmp, 1, 3)) %>%
+  select(-c(well_tmp)) %>%
+  left_join(annotation_file_E2410) %>%
+  mutate(
+    date = "ME20231219",
+    # case_when(col %in% c(10, 11, 12) & row %in% c("E", "F", "G") ~ "control", 
+    experiment = "E2410",
+    type = case_when(col %in% c(1,2,3) ~ "pool",
+                     col %in% c(4,5,6) & row %in% c("E", "F", "G", "H") ~ "pool",
+                     col %in% c(10, 11, 12) & row %in% c("E", "F", "G") ~ "control",
+                     .default = "clone"),
+    expected_insert = case_when(constructs %in% c("34", "40", "41") ~ paste0("pME0", constructs),
+                                constructs == "UT" ~ "HyTK",
+                                constructs == "ctrl" ~ "HyTK",
+                                constructs == "WT" ~ "none",
+                                .default = "pME034"),
+    landing_pad = case_when(cell_line %in% c("8", "23", "C9","C10") ~ cell_line,
+                            cell_line == "WT" ~ "none"),
+    GFP_state = case_when(cell_line == "WT" ~ "GFP-",
+                          .default = "GFP+"),
+    mCh_state = case_when(cell_line == "WT" ~ "mCh-",
+                          .default = "mCh+"),
+    selection = case_when(GV_selected == "yes" ~ "Gv",
+                          col %in% c(1,2,3) ~ "FACS"),
+    clone_number = case_when(selection == "Gv" & type == "clone" ~ split_string(clone_names, "_", 3))) %>%
+  mutate(
+    name = paste0(case_when(!is.na(selection) & type == "pool" ~ paste0("E2410_orig_", selection, "_pool_", landing_pad, "_", mCh_state, "_", expected_insert),
+                            !is.na(selection) & type == "clone" ~ paste0("E2410_orig_", selection, "_clone_", landing_pad, "_", mCh_state, "_", expected_insert, "_", clone_number),
+                            type == "control" ~ case_when(constructs == "WT" ~ "WT",
+                                                                constructs == "23_34A_ctrl" ~ "23_34A",
+                                                                constructs == "8_34_8_ctrl" ~ "8_34-8"))
+                  )) %>%
+  select(-c("WELL", "cell_line", "GV_selected", "clone_names", "constructs")) %>%
+  #select only the clones (we don't use the pools anymore)
+  filter(type %in% c("clone", "control")) %>%
+  mutate(insert_genotyped = "good") %>% #see E2568, all clones in this experiment have the correct insert
+  select(-selection, clone_number)
+  
+```
+
+### E2427
+```{r load_E2427}
+annotation_tib_E2427 = read_xlsx(path_annotation_E2427)
+
+fcs_files_E2427 = dir(path_fcs_files_E2427, full.names = T)
+names(fcs_files_E2427) = str_remove(str_remove(fcs_files_E2427, '.*/'),"_Single Cells2.fcs")
+
+matched_annotation_tib_E2427 = tibble(filenames = names(fcs_files_E2427),
+                                full_filename = fcs_files_E2427,
+                                date = "CM20240206",
+                                plate = split_string(filenames, "_", 2),
+                                # N_char = str_length(filenames),
+                                well_tmp = str_extract(filenames, "...$"),
+                                row = substr(well_tmp, 1, 1),
+                                col = as.numeric(substr(well_tmp, 2, 3)),
+                                well = paste0(row, col)) %>%
+  select(-c(row, col, well_tmp)) %>%
+  left_join(annotation_tib_E2427) %>%
+  #remove all remeasurements from E2410 (don't need them, just confusing) as well as the remeasured clones from E2350/ pools from E2263
+  filter(!experiment %in% c("E2410", "E2350","E2263")) %>%
+  mutate(expected_insert = case_when(expected_insert %in% c("34","37", "40", "41") ~ paste0("pME0", expected_insert),
+                                     .default = expected_insert),
+         type = case_when(experiment == "control" ~ 'control',
+                          .default = type),
+         experiment = "E2427") %>%
+ #select only the clones (we don't use the pools anymore)
+  filter(type == "clone" & insert_genotyped == "good" | type == "control")%>%
+  select(-c(deletion, note_genotyping, selection, details))
+
+
+``` 
+
+### E2742
+```{r load_E2742}
+annotation_file_E2742 = read_tsv(path_annotation_E2742) %>%
+  replace_na(list(Selection_mCh  = "", Selection_PCR = "", Comments = "")) %>%
+  #select genotyped clones
+  filter(Selection_mCh != "mCh_neg" & !Selection_PCR %in% c("no_band")) %>%
+  mutate(insert_genotyped = 'good',
+         filenames = str_remove( filename, '.fcs'))%>%
+  select(-c(Comments, Selection_mCh, Selection_PCR, filename)) 
+
+#there was an error in the export of the controls, 3 filenames got shifted
+#here I correct the filenames (which I checked with the exported pdf)
+annotation_E2742_controls = tibble(filenames = c("23_34A_G3_G03", "C9_34_G4_G04", "WT_G1_G01"),
+                                   sample_corrected = c("F121/9", "23_34A", "WT"))
+
+annotation_file_E2742 = bind_rows(annotation_file_E2742, annotation_E2742_controls)
+
+fcs_files_E2742 = dir(path_fcs_files_E2742, full.names = T, recursive = T)
+names(fcs_files_E2742) = str_remove(str_remove(fcs_files_E2742, '.*/export_'),"_Single Cells2.fcs")
+
+filename_E2742_tib = tibble(filenames = names(fcs_files_E2742),
+                                full_filename = fcs_files_E2742,
+                                date = "CM20250204",
+                                expected_insert = case_when(grepl('pCM', filenames)|grepl('pME', filenames) ~ str_remove(filenames, "_.*$")),
+                                well = case_when(grepl('pCM', filenames)|grepl('pME', filenames) ~ str_remove(str_remove(filenames, "^.*_"), '.fcs'))) 
+
+matched_annotation_tib_E2742 = annotation_file_E2742 %>% 
+  left_join(filename_E2742_tib) %>%
+  mutate(expected_insert = case_when(sample_corrected %in% c("WT", "F121/9" )~ "none",
+                            sample_corrected == "23_34A" ~ "pME034",
+                            .default = insert),
+         type = case_when(sample_corrected %in% c("WT", "F121/9", "23_34A") ~ "control",
+                          .default = "clone"),
+         landing_pad = case_when(sample_corrected %in% c("WT", "F121/9") ~ "none",
+                                 .default = "23"),
+         mCh_state = case_when(sample_corrected %in% c("WT" ) ~ "mCh-",
+                               .default = "mCh+"),
+         GFP_state = case_when(sample_corrected %in% c("WT" ) ~ "GFP-",
+                               .default = "GFP+"),
+         experiment = "E2742",
+         name = sample_corrected
+  ) %>%
+  select(-insert)
+
+
+```
+
+### E2759
+```{r load_E2759}
+annotation_file_E2759 = read_xlsx(path_annotation_E2759)
+
+fcs_files_E2759_round3 = dir(path_fcs_files_E2759_round3, full.names = T)
+names(fcs_files_E2759_round3) = str_remove(str_remove(str_remove(fcs_files_E2759_round3, '.*/'),"_Single Cells2.fcs"), "export_")
+
+file_loc_tib_E2759 = enframe(fcs_files_E2759_round3)%>%
+  dplyr::rename(full_filename = value) %>%
+  mutate(Round = 'round3',
+         sample_name_link = paste0(Round, "_", name)) %>%
+  select(-name)
+
+matched_annotation_tib_E2759 = annotation_file_E2759 %>%
+  filter(Round == "round3") %>%
+  mutate(sample_name_link = paste0(Round, "_",str_remove(Sample, '.fcs'))) %>%
+  left_join(file_loc_tib_E2759) %>%
+  mutate(date = "ME20250320") %>%
+  dplyr::rename(filenames = sample_name_link) %>%
+  dplyr::mutate(landing_pad = factor(landing_pad, levels = c("C9", "23")),
+         expected_insert = case_when(expected_insert == "M34" ~ "pME034",
+                            expected_insert == "M41" ~ "pME041",
+                            expected_insert == "C38" ~ "pCM038",
+                            expected_insert == "C39" ~ "pCM039",
+                            expected_insert == "none" ~ "none"),
+         experiment = "E2759")
+
+
+
+```
+
+
+## combine experiments
+```{r combine_experiments}
+#combine and rename inserts/landing pads
+matched_annotation_comb = bind_rows(matched_annotation_tib_E2427, matched_annotation_tib_E2410,matched_annotation_tib_E2742, matched_annotation_tib_E2759) %>%
+  mutate(insert_name = factor(expected_insert, levels = c( "none", "HyTK", "pME037", "pME034", "pME041", 
+                                                           paste0("pCM0", 38:41), "pME040",paste0("pCM0", 43:45)),
+                                     labels = c(  "none","HyTK", "minimal insert", "Sox2P_mTurq", "Sox2P_CDS_mTurq",
+                                                  "Sox2P_mTurq_CDS", "Sox2P_mTurq_stop_CDS", "Sox2P_mTurq_PAS_CDS", "Sox2P_mTurq_revCDS", 
+                                                   "Sox2P_CDS_mTurq_UTR",
+                                                  "Sox2P_mTurq_CDS_UTR", "Sox2P_mTurq_stop_CDS_UTR", "Sox2P_mTurq_PAS_CDS_UTR")),
+         landing_pad = factor(landing_pad, levels = c("none", "C9", "23", "8"),
+                              labels = c("no insert", "-161 kb", "-116 kb", "-39 kb")),
+         insert_group = factor(case_when(expected_insert  == "pME037" ~ "minimal insert",
+                                  expected_insert  == "pME034" ~ "Sox2P",
+                                  expected_insert  %in% c("pME041", paste0("pCM0", 38:41)) ~ "Sox2P_CDS",
+                                  expected_insert  %in% c("pME040", paste0("pCM0", 43:45)) ~ "Sox2P_CDS_UTR",
+                                  .default = expected_insert)),
+         insert_variant = case_when(expected_insert %in% c("pME037", "pME034", "pME040", "pME041") ~ "original",
+                                    expected_insert %in% c("pCM038", "pCM043") ~ "P2A",
+                                    expected_insert %in% c("pCM039", "pCM044") ~ "STOP",
+                                    expected_insert %in% c("pCM040", "pCM045") ~ "PAS",
+                                    expected_insert == "pCM041" ~ "revCDS"))
+
+```
+
+## load fcs files
+```{r}
+#make dataframe
+matched_annotation_df_comb = data.frame(matched_annotation_comb)
+rownames(matched_annotation_df_comb) = matched_annotation_df_comb$filenames
+
+#read data
+flowset_comb = flowCore::read.flowSet(files = matched_annotation_df_comb$full_filename, alter.names = T, truncate_max_range = F, ignore.text.offset = T)
+
+flowCore::sampleNames(flowset_comb) = matched_annotation_df_comb$filenames
+flowCore::pData(flowset_comb) = matched_annotation_df_comb
+
+flowset_fluo_comb = flowset_comb[,c('BL.B..530_30.A', 'YG.D..610_20.A', 'V.F..450_50.A')]
+colnames(flowset_fluo_comb) = c("GFP", "mCherry", "mTurq")
+
+```
+
+
+```{r preprocess_fcs_data_comb}
+total_cell_count_tmp = flowCore::keyword(flowset_fluo_comb, "$TOT")[,'$TOT']
+total_cell_count = as.numeric(total_cell_count_tmp)
+names(total_cell_count) = names(total_cell_count_tmp)
+
+median_mTurq = sapply(1:length(flowset_fluo_comb), function(i){
+  median(flowCore::exprs(flowset_fluo_comb[[i]])[,'mTurq'])
+})
+names(median_mTurq) = sampleNames(flowset_fluo_comb)
+
+median_mCherry = sapply(1:length(flowset_fluo_comb), function(i){
+  median(flowCore::exprs(flowset_fluo_comb[[i]])[,'mCherry'])
+})
+names(median_mCherry) = sampleNames(flowset_fluo_comb)
+
+
+median_GFP = sapply(1:length(flowset_fluo_comb), function(i){
+  median(flowCore::exprs(flowset_fluo_comb[[i]])[,'GFP'])
+})
+names(median_GFP) = sampleNames(flowset_fluo_comb)
+
+flowCore::pData(flowset_fluo_comb)$median_mTurq = median_mTurq
+flowCore::pData(flowset_fluo_comb)$median_mCherry = median_mCherry
+flowCore::pData(flowset_fluo_comb)$median_GFP = median_GFP
+
+flowCore::pData(flowset_fluo_comb)$total_cell_count = total_cell_count
+
+fcs_tib = tibble(flowCore::pData(flowset_fluo_comb))
+```
+
+
+# Normalize expression
+```{r normalize_expression_values}
+#subtract autofluorescence, normalize to GFP
+autofluo_tib_comb = fcs_tib  %>%
+  group_by(date) %>%
+  filter(name == "WT") %>%
+  summarize(mTurq_WT = mean(median_mTurq),
+           mCherry_WT = mean(median_mCherry),
+            GFP_WT = mean(median_GFP) )
+
+expression_tib_comb = fcs_tib %>%
+  left_join(autofluo_tib_comb) %>%
+  mutate(median_mTurq_cor = median_mTurq - mTurq_WT,
+         median_mCherry_cor = median_mCherry - mCherry_WT,
+         median_GFP_cor = median_GFP - GFP_WT) %>%
+  mutate(mTurq_norm = median_mTurq_cor / median_GFP_cor,
+         mCherry_norm = median_mCherry_cor / median_GFP_cor)
+
+#normalize to 23_34A (to compare between measurement days)
+standard_tib = expression_tib_comb %>%
+  group_by(date) %>%
+  filter(name == "23_34A") %>%
+  summarize(mTurq_norm_standard = mean(mTurq_norm),
+           mCherry_norm_standard = mean(mCherry_norm),
+            GFP_standard = mean(median_GFP_cor) )
+
+expression_tib_comb = expression_tib_comb %>%
+  left_join(standard_tib) %>%
+  mutate(rel_mTurq = mTurq_norm / mTurq_norm_standard,
+         rel_mCherry = mCherry_norm / mCherry_norm_standard,
+         rel_GFP_cor = median_GFP_cor / GFP_standard)
+
+``` 
+
+# Plot clones
+To compare the expression values, we use the Welch's t test, this assumes that the values are normally distributed, but does *not* assume equal variances.
+
+
+## relative mTurq 
+### mCh+ clones, old CDS reporters
+Plot mChpos swapped clones with the original CDS reporters (from the first 2 experiments). 
+I realized in the original plot we did not filter for >= 500 recorded cells, when we add that filter (which is also used in other plots), we lose 2 more clones for LP8. Below is the new, more correctly filtered plot.
+
+```{r, fig_5B_rel_mT_mChpos_oldCDS, fig.width=6, fig.height = 4}
+
+filter(expression_tib_comb, type %in% c("clone")  & experiment %in% c("E2410", "E2427") &
+         total_cell_count >= 500 &
+         GFP_state != "GFP-" & #exclude WT (scaling to 0 GFP is meaningless)
+         mCh_state != "mCh-" #C9_mCh- and 23_mCh- are not relevant for this comparison
+         ) %>%
+  #genotyping
+  filter(is.na(insert_genotyped) | insert_genotyped == "good") %>%
+
+  #plotting
+  ggplot(aes(x = insert_name, y = rel_mTurq, col = insert_group)) +
+  facet_nested(. ~ landing_pad , scales = "free_x", space = "free_x") +
+  geom_boxplot(outlier.shape = NA) +
+  geom_point(position = position_jitterdodge(jitter.width = 1.8), size = 2) +
+  geom_hline(yintercept = 1, linetype = "dashed") + 
+  geom_hline(yintercept = 0) + 
+  
+  #stats
+  stat_compare_means(
+    comparisons = list(c("Sox2P_mTurq", "Sox2P_CDS_mTurq"), c("Sox2P_mTurq", "Sox2P_CDS_mTurq_UTR"),
+                                        c("Sox2P_CDS_mTurq", "Sox2P_CDS_mTurq_UTR")),
+    label = "p.format", method = "t.test", method.args = list(var.equal = FALSE),
+    tip.length = 0.02) +
+
+  #layout
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1),
+        legend.position = "none",
+        axis.title.x = element_blank()) +
+  ggtitle("mTurq, clones from both experiments") +
+  ylab("relative reporter expression") +
+  col_scale_CDS_groups
+``` 
+
+
+Also slightly altered numbers because we now filter for >= 500 recorded cells
+```{r, rel_mT_mChpos_numbers_oldCDS}
+median_expr_values_tib = filter(expression_tib_comb, type %in% c("clone")  & experiment %in% c("E2410", "E2427") &
+         total_cell_count >= 500 &
+         GFP_state != "GFP-" & #exclude WT (scaling to 0 GFP is meaningless)
+         mCh_state != "mCh-" #C9_mCh- and 23_mCh- are not relevant for this comparison
+         ) %>%
+ 
+  #genotyping
+  filter(is.na(insert_genotyped) | insert_genotyped == "good") %>%
+  
+  #calculate median per condition
+  group_by(landing_pad, insert_name) %>%
+  summarize(median_rel_mTurq = median(rel_mTurq),
+            median_rel_mCherry = median(rel_mCherry))
+  
+#calculate fold change mTurq Sox2P vs CDS
+median_expr_values_tib %>%
+  select(-median_rel_mCherry) %>%
+  pivot_wider(names_from = "insert_name", values_from = "median_rel_mTurq")%>%
+  mutate(fc_Sox2P_CDS = Sox2P_CDS_mTurq / Sox2P_mTurq,
+         fc_Sox2P_CDS_UTR = Sox2P_CDS_mTurq_UTR / Sox2P_mTurq)
+  
+#calculate fold change mCherry each vs minimal insert
+median_expr_values_tib %>%
+  select(-median_rel_mTurq ) %>%
+  pivot_wider(names_from = "insert_name", values_from = "median_rel_mCherry")%>%
+  mutate(fc_Sox2P = Sox2P_mTurq / `minimal insert`,
+         fc_Sox2P_CDS = Sox2P_CDS_mTurq / `minimal insert`,
+         fc_Sox2P_CDS_UTR = Sox2P_CDS_mTurq_UTR / `minimal insert`) %>%
+  mutate(fc_Sox2P_perc = 100*(1-fc_Sox2P),
+         fc_Sox2P_CDS_perc = 100*(1-fc_Sox2P_CDS),
+         fc_Sox2P_CDS_UTR_perc = 100*(1-fc_Sox2P_CDS_UTR)
+  )
+  
+``` 
+
+### Fig 5G - mCh+ clones, new reporters
+```{r, fig_5G_rel_mT_mChpos_newCDS, fig.width=5.4, fig.height = 4}
+
+filter(expression_tib_comb, type %in% c("clone")  & experiment == "E2742" &
+         total_cell_count >= 500 &
+         GFP_state != "GFP-" & #exclude WT (scaling to 0 GFP is meaningless)
+         mCh_state != "mCh-" & #C9_mCh- and 23_mCh- are not relevant for this comparison
+         insert_group %in% c("minimal insert", "Sox2P", "Sox2P_CDS")) %>% #leave UTR for supplement
+  #genotyping
+  filter(is.na(insert_genotyped) | insert_genotyped == "good") %>%
+
+  #plotting
+  ggplot(aes(x = insert_name, y = rel_mTurq, col = insert_group)) +
+  facet_nested(. ~ landing_pad , scales = "free_x", space = "free_x") +
+  geom_boxplot(outlier.shape = NA) +
+  geom_point(position = position_jitterdodge(jitter.width = 1.8), size = 2) +
+  geom_hline(yintercept = 1, linetype = "dashed") + 
+  geom_hline(yintercept = 0) + 
+  
+  #stats
+  stat_compare_means(
+     ref.group = "Sox2P_mTurq",
+    label = "p.format", method = "t.test", method.args = list(var.equal = FALSE),
+   angle = 90, label.y.npc = 0.8, size = 3) +
+
+
+  #layout
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1),
+        legend.position = "none",
+        axis.title.x = element_blank()) +
+  ggtitle("mTurq, new reporters") +
+  ylab("relative reporter expression") +
+  col_scale_CDS_groups
+
+``` 
+
+### Fig S6I - rel_mT_mChpos_newCDS_UTR
+```{r, fig_S6I_rel_mT_mChpos_newCDS_UTR, fig.width=6, fig.height = 4}
+
+tib_for_plot = filter(expression_tib_comb, type %in% c("clone")  & experiment == "E2742" &
+         total_cell_count >= 500 &
+         GFP_state != "GFP-" & #exclude WT (scaling to 0 GFP is meaningless)
+         mCh_state != "mCh-"  #C9_mCh- and 23_mCh- are not relevant for this comparison
+         ) %>% #leave UTR for supplement
+  #genotyping
+  filter(is.na(insert_genotyped) | insert_genotyped == "good") 
+ 
+
+#plotting
+ggplot(tib_for_plot, aes(x = insert_name, y = rel_mTurq, col = insert_group)) +
+  facet_nested(. ~ landing_pad , scales = "free_x", space = "free_x") +
+  geom_boxplot(outlier.shape = NA) +
+  geom_point(position = position_jitterdodge(jitter.width = 1.8), size = 2) +
+  # geom_hline(data = ref_dash_lines, aes(yintercept = ref_rel_mCh), linetype = 'dashed')+
+  geom_hline(yintercept = 1, linetype = "dashed") +
+  geom_hline(yintercept = 0) + 
+  
+  #stats
+  stat_compare_means(
+     ref.group = "Sox2P_mTurq",
+    label = "p.format", method = "t.test", method.args = list(var.equal = FALSE),
+   angle = 90, label.y.npc = 0.8, size = 3) +
+
+  #layout
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1),
+        legend.position = "none",
+        axis.title.x = element_blank()) +
+  ggtitle("mCherry, new reporters") +
+  ylab("relative Sox2::mCherry expression") +
+  col_scale_CDS_groups
+
+
+``` 
+
+### Fig 5H - mCh- clones, old
+```{r, fig_5H_rel_mT_mChneg_oldCDS, fig.width=4.5, fig.height = 4}
+
+filter(expression_tib_comb, type == "clone"  & 
+         experiment == "E2427" &
+         total_cell_count >= 500 &
+         GFP_state != "GFP-" & #exclude WT (scaling to 0 GFP is meaningless)
+         mCh_state == "mCh-" #C9_mCh- and 23_mCh- are not relevant for this comparison
+         ) %>%
+  
+  #genotyping
+  filter(is.na(insert_genotyped) | insert_genotyped == "good") %>%
+  
+  #plotting
+  ggplot(aes(x = insert_name, y = rel_mTurq, col = insert_group)) +
+  facet_nested(. ~ landing_pad , scales = "free_x", space = "free_x") +
+  geom_boxplot(outlier.shape = NA) +
+  geom_point(position = position_jitterdodge(jitter.width = 1.8), size = 2) +
+  geom_hline(yintercept = 1, linetype = "dashed") + 
+  geom_hline(yintercept = 0) + 
+  
+  #stats
+  stat_compare_means(
+    comparisons = list(c("Sox2P_mTurq", "Sox2P_CDS_mTurq"), c("Sox2P_mTurq", "Sox2P_CDS_mTurq_UTR"),
+                                        c("Sox2P_CDS_mTurq", "Sox2P_CDS_mTurq_UTR")),
+    label = "p.format", method = "t.test", method.args = list(var.equal = FALSE), # t.test var.equal = F gives a Welch's t-test
+    tip.length = 0.02) +
+
+  #layout
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1),
+        legend.position = "none",
+        axis.title.x = element_blank()) +
+  ggtitle("mTurq for mCh- clones") +
+  ylab("relative reporter expression") +
+  col_scale_CDS_groups
+
+``` 
+
+```{r, rel_mT_mChneg_numbers_oldCDS}
+mean_expr_values_tib_mChneg = filter(expression_tib_comb, type == "clone"  & 
+         experiment == "E2427" &
+         total_cell_count >= 500 &
+         GFP_state != "GFP-" & #exclude WT (scaling to 0 GFP is meaningless)
+         mCh_state == "mCh-" #C9_mCh- and 23_mCh- are not relevant for this comparison
+         ) %>%
+
+  #genotyping
+  filter(is.na(insert_genotyped) | insert_genotyped == "good") %>%
+  
+  #calculate mean per condition
+  group_by(landing_pad, insert_name) %>%
+  summarize(mean_rel_mTurq = mean(rel_mTurq))
+  
+#calculate fold change mTurq Sox2P vs CDS
+mean_expr_values_tib_mChneg %>%
+  pivot_wider(names_from = "insert_name", values_from = "mean_rel_mTurq")%>%
+  mutate(fc_Sox2P_CDS = Sox2P_CDS_mTurq / Sox2P_mTurq,
+         fc_Sox2P_CDS_UTR = Sox2P_CDS_mTurq_UTR / Sox2P_mTurq)
+
+``` 
+
+### Fig S6M - mCh- clones, new
+```{r, fig_S6M_rel_mT_mChneg_newCDS, fig.width=4.5, fig.height = 4}
+
+filter(expression_tib_comb, type == "clone"  & 
+         experiment == "E2759" &
+         total_cell_count >= 500 &
+         GFP_state != "GFP-" & #exclude WT (scaling to 0 GFP is meaningless)
+         mCh_state == "mCh-" #C9_mCh- and 23_mCh- are not relevant for this comparison
+         ) %>%
+  
+  #genotyping
+  filter(is.na(insert_genotyped) | insert_genotyped == "good") %>%
+  
+  #plotting
+  ggplot(aes(x = insert_name, y = rel_mTurq, col = insert_group)) +
+  facet_nested(. ~ landing_pad , scales = "free_x", space = "free_x") +
+  geom_boxplot(outlier.shape = NA) +
+  geom_point(position = position_jitterdodge(jitter.width = 1.8), size = 2) +
+  geom_hline(yintercept = 1, linetype = "dashed") + 
+  geom_hline(yintercept = 0) + 
+  
+  #stats
+  stat_compare_means(
+      ref.group = "Sox2P_mTurq",
+    label = "p.format", method = "t.test", method.args = list(var.equal = FALSE),
+   angle = 90, label.y.npc = 0.8, size = 3) +
+
+  #layout
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1),
+        legend.position = "none",
+        axis.title.x = element_blank()) +
+  ggtitle("mTurq for mCh- clones") +
+  ylab("relative reporter expression") +
+  col_scale_CDS_groups
+
+
+``` 
+
+```{r, rel_mT_mChneg_numbers_newCDS}
+mean_expr_values_tib_mChneg = filter(expression_tib_comb, type == "clone"  & 
+         experiment == "E2759" &
+         total_cell_count >= 500 &
+         GFP_state != "GFP-" & #exclude WT (scaling to 0 GFP is meaningless)
+         mCh_state == "mCh-" #C9_mCh- and 23_mCh- are not relevant for this comparison
+         ) %>%
+
+  #genotyping
+  filter(is.na(insert_genotyped) | insert_genotyped == "good") %>%
+  
+  #calculate mean per condition
+  group_by(landing_pad, insert_name) %>%
+  summarize(mean_rel_mTurq = mean(rel_mTurq))
+  
+#calculate fold change mTurq Sox2P vs CDS
+mean_expr_values_tib_mChneg %>%
+  pivot_wider(names_from = "insert_name", values_from = "mean_rel_mTurq")%>%
+  mutate(fc_Sox2P_CDS_mTurq = Sox2P_CDS_mTurq / Sox2P_mTurq,
+         fc_Sox2P_mTurq_CDS = Sox2P_mTurq_CDS / Sox2P_mTurq,
+         fc_Sox2P_mTurq_stop_CDS = Sox2P_mTurq_stop_CDS / Sox2P_mTurq,
+         )
+
+``` 
+
+## relative mCherry
+### Fig 5B - mCh+ clones, old CDS rep
+```{r, fig_5B_rel_mCh_mChpos_oldCDS, fig.width=6, fig.height = 4}
+
+tib_for_plot = filter(expression_tib_comb, type %in% c("clone")  & experiment %in% c("E2410", "E2427") &
+         total_cell_count >= 500 &
+         GFP_state != "GFP-" & #exclude WT (scaling to 0 GFP is meaningless)
+         mCh_state != "mCh-" #C9_mCh- and 23_mCh- are not relevant for this comparison
+         ) %>%
+  
+  #genotyping
+  filter(is.na(insert_genotyped) | insert_genotyped == "good")
+ 
+ref_dash_lines = tib_for_plot %>%
+  filter(insert_group == "minimal insert") %>%
+  group_by(landing_pad) %>%
+  summarize(ref_rel_mCh = mean(rel_mCherry))
+
+#plotting
+ggplot(tib_for_plot, aes(x = insert_name, y = rel_mCherry, col = insert_group)) +
+  facet_nested(. ~ landing_pad , scales = "free_x", space = "free_x") +
+  geom_boxplot(outlier.shape = NA) +
+  geom_point(position = position_jitterdodge(jitter.width = 1.8), size = 2) +
+  geom_hline(data = ref_dash_lines, aes(yintercept = ref_rel_mCh), linetype = 'dashed')+
+  # geom_hline(yintercept = 1, linetype = "dashed") + 
+  geom_hline(yintercept = 0) + 
+  
+  #stats
+  stat_compare_means(
+    comparisons = list( c("minimal insert", "Sox2P_mTurq"), c("minimal insert", "Sox2P_CDS_mTurq"), c("minimal insert", "Sox2P_CDS_mTurq_UTR"),
+                        c("Sox2P_CDS_mTurq", "Sox2P_CDS_mTurq_UTR")),
+    label = "p.format", method = "t.test", method.args = list(var.equal = FALSE),
+    tip.length = 0.02) +
+
+  #layout
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1),
+        legend.position = "none",
+        axis.title.x = element_blank()) +
+  ggtitle("mCherry, clones from both experiments") +
+  ylab("relative Sox2::mCherry expression") +
+  col_scale_CDS_groups
+
+
+``` 
+
+### Fig 5G - mCh+ clones, new reporters
+```{r, fig_5G_rel_mCh_mChpos_newCDS, fig.width=5.4, fig.height = 4}
+tib_for_plot = filter(expression_tib_comb, type %in% c("clone")  & experiment == "E2742" &
+         total_cell_count >= 500 &
+         GFP_state != "GFP-" & #exclude WT (scaling to 0 GFP is meaningless)
+         mCh_state != "mCh-" & #C9_mCh- and 23_mCh- are not relevant for this comparison
+         insert_group %in% c("minimal insert", "Sox2P", "Sox2P_CDS")) %>% #leave UTR for supplement
+  #genotyping
+  filter(is.na(insert_genotyped) | insert_genotyped == "good") 
+ 
+ref_dash_lines = tib_for_plot %>%
+  filter(insert_group == "minimal insert") %>%
+  group_by(landing_pad) %>%
+  summarize(ref_rel_mCh = mean(rel_mCherry))
+
+#plotting
+  ggplot(tib_for_plot, aes(x = insert_name, y = rel_mCherry, col = insert_group)) +
+  facet_nested(. ~ landing_pad , scales = "free_x", space = "free_x") +
+  geom_boxplot(outlier.shape = NA) +
+  geom_point(position = position_jitterdodge(jitter.width = 1.8), size = 2) +
+  geom_hline(data = ref_dash_lines, aes(yintercept = ref_rel_mCh), linetype = 'dashed')+
+  # geom_hline(yintercept = 1, linetype = "dashed") + 
+  geom_hline(yintercept = 0) + 
+  
+  #stats
+  stat_compare_means(
+     ref.group = "minimal insert",
+    label = "p.format", method = "t.test", method.args = list(var.equal = FALSE),
+   angle = 90, label.y.npc = 0.90, size = 3) +
+
+  #layout
+    scale_y_continuous(limits = c(0, 2)) +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1),
+        legend.position = "none",
+        axis.title.x = element_blank()) +
+  ggtitle("mCherry, new reporters") +
+  ylab("relative Sox2::mCherry expression") +
+  col_scale_CDS_groups
+
+
+``` 
+
+### Fig S6I - rel_mCh_mChpos_newCDS_UTR
+```{r , fig_S6I_rel_mCh_mChpos_newCDS_UTR, fig.width=8, fig.height = 4}
+tib_for_plot = filter(expression_tib_comb, type %in% c("clone")  & experiment == "E2742" &
+         total_cell_count >= 500 &
+         GFP_state != "GFP-" & #exclude WT (scaling to 0 GFP is meaningless)
+         mCh_state != "mCh-"  #C9_mCh- and 23_mCh- are not relevant for this comparison
+         ) %>% #leave UTR for supplement
+  #genotyping
+  filter(is.na(insert_genotyped) | insert_genotyped == "good") 
+ 
+ref_dash_lines = tib_for_plot %>%
+  filter(insert_group == "minimal insert") %>%
+  group_by(landing_pad) %>%
+  summarize(ref_rel_mCh = mean(rel_mCherry))
+
+#plotting
+ggplot(tib_for_plot, aes(x = insert_name, y = rel_mCherry, col = insert_group)) +
+  facet_nested(. ~ landing_pad , scales = "free_x", space = "free_x") +
+  geom_boxplot(outlier.shape = NA) +
+  geom_point(position = position_jitterdodge(jitter.width = 1.8), size = 2) +
+  geom_hline(data = ref_dash_lines, aes(yintercept = ref_rel_mCh), linetype = 'dashed')+
+  # geom_hline(yintercept = 1, linetype = "dashed") + 
+  geom_hline(yintercept = 0) + 
+  
+  #stats
+  stat_compare_means(
+     ref.group = "minimal insert",
+    label = "p.format", method = "t.test", method.args = list(var.equal = FALSE),
+   angle = 90, label.y.npc = 0.95, size = 3) +
+
+  #layout
+  scale_y_continuous(limits = c(0, 2)) +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1),
+        legend.position = "none",
+        axis.title.x = element_blank()) +
+  ggtitle("mCherry, new reporters") +
+  ylab("relative Sox2::mCherry expression") +
+  col_scale_CDS_groups
+
+
+``` 
+
+## absolute expression values
+still need to compare between experiments, so: subtract autofluorescence and divide by 23_34A
+
+```{r}
+standard_tib_raw = expression_tib_comb %>%
+  group_by(date) %>%
+  filter(name == "23_34A") %>%
+  summarize(mTurq_raw_standard = mean(median_mTurq_cor),
+           mCherry_raw_standard = mean(median_mCherry_cor),
+            GFP_raw_standard = mean(median_GFP_cor) )
+
+expression_tib_comb_notnorm = expression_tib_comb %>%
+  left_join(standard_tib_raw) %>%
+  mutate(rel_mTurq_raw = median_mTurq_cor / mTurq_raw_standard,
+         rel_mCherry_raw = median_mCherry_cor / mCherry_raw_standard,
+         rel_GFP_raw = median_GFP_cor / GFP_raw_standard)
+```
+
+calculate fold change
+```{r raw_fold_changes_oldCDS}
+
+#calculate fold change mTurq Sox2P vs CDS
+median_expr_values_tib %>%
+  select(-median_rel_mCherry) %>%
+  pivot_wider(names_from = "insert_name", values_from = "median_rel_mTurq")%>%
+  mutate(fc_Sox2P_CDS = Sox2P_CDS_mTurq / Sox2P_mTurq,
+         fc_Sox2P_CDS_UTR = Sox2P_CDS_mTurq_UTR / Sox2P_mTurq)
+  
+median_expr_values_tib_notnorm = filter(expression_tib_comb_notnorm, type == "clone"  &  experiment %in% c("E2410", "E2427") &
+         GFP_state != "GFP-" & #exclude WT (scaling to 0 GFP is meaningless)
+         mCh_state != "mCh-" #C9_mCh- and 23_mCh- are not relevant for this comparison
+         ) %>%
+ 
+  #genotyping
+  filter(is.na(insert_genotyped) | insert_genotyped == "good") %>%
+
+  #calculate median per condition
+  group_by(landing_pad, insert_name) %>%
+  summarize(median_rel_mTurq_raw = median(rel_mTurq_raw),
+            median_rel_mCherry_raw = median(rel_mCherry_raw))
+
+
+#calculate fold change mTurq Sox2P vs CDS
+median_expr_values_tib_notnorm %>%
+  select(-median_rel_mCherry_raw) %>%
+  pivot_wider(names_from = "insert_name", values_from = "median_rel_mTurq_raw")%>%
+  mutate(fc_Sox2P_CDS = Sox2P_CDS_mTurq / Sox2P_mTurq,
+         fc_Sox2P_CDS_UTR = Sox2P_CDS_mTurq_UTR / Sox2P_mTurq)
+
+``` 
+
+```{r raw_fold_changes_newCDS}
+
+#calculate fold change mTurq Sox2P vs CDS
+median_expr_values_tib %>%
+  select(-median_rel_mCherry) %>%
+  pivot_wider(names_from = "insert_name", values_from = "median_rel_mTurq")%>%
+  mutate(fc_Sox2P_CDS = Sox2P_CDS_mTurq / Sox2P_mTurq,
+         fc_Sox2P_CDS_UTR = Sox2P_CDS_mTurq_UTR / Sox2P_mTurq)
+  
+median_expr_values_tib_notnorm = filter(expression_tib_comb_notnorm, type == "clone"  &  experiment %in% c("E2742") &
+         GFP_state != "GFP-" & #exclude WT (scaling to 0 GFP is meaningless)
+         mCh_state != "mCh-" #C9_mCh- and 23_mCh- are not relevant for this comparison
+         ) %>%
+ 
+  #genotyping
+  filter(is.na(insert_genotyped) | insert_genotyped == "good") %>%
+
+  #calculate median per condition
+  group_by(landing_pad, insert_name) %>%
+  summarize(median_rel_mTurq_raw = median(rel_mTurq_raw),
+            median_rel_mCherry_raw = median(rel_mCherry_raw))
+
+
+#calculate fold change mTurq Sox2P vs CDS
+median_expr_values_tib_notnorm %>%
+  mutate(Sox2P_ref = pull(filter(median_expr_values_tib_notnorm , insert_name == "Sox2P_mTurq"), median_rel_mTurq_raw ),
+         fc_to_Sox2P = median_rel_mTurq_raw/Sox2P_ref) %>%
+  select(-c(median_rel_mCherry_raw, Sox2P_ref))
+
+``` 
+
+### Fig S7A - mCh+ clones, old
+```{r, fig_S7A_abs_mChpos_old, fig.width=8, fig.height = 4}
+
+tib_for_plot = filter(expression_tib_comb_notnorm, type == "clone"  & experiment %in% c("E2410", "E2427") & 
+         total_cell_count >= 500 &
+         GFP_state != "GFP-" & #exclude WT (scaling to 0 GFP is meaningless)
+         mCh_state != "mCh-" #C9_mCh- and 23_mCh- are not relevant for this comparison
+         ) %>%
+  #genotyping
+  filter(is.na(insert_genotyped) | insert_genotyped == "good")
+
+ref_dash_lines = tib_for_plot %>%
+  filter(insert_group == "minimal insert") %>%
+  group_by(landing_pad) %>%
+  summarize(ref_rel_mCh = mean(rel_mCherry_raw),
+            ref_rel_GFP = mean(rel_GFP_raw))
+
+
+#plotting mTurq
+plot_mTurq = ggplot(tib_for_plot, aes(x = insert_name, y = rel_mTurq_raw, col = insert_group)) +
+  facet_nested(. ~ landing_pad , scales = "free_x", space = "free_x") +
+  geom_hline(yintercept = 1, linetype = "dashed") + 
+  geom_hline(yintercept = 0) + 
+    geom_boxplot(outlier.shape = NA) +
+  geom_point(position = position_jitterdodge(jitter.width = 1.8), size = 1) +
+
+  #stats
+  stat_compare_means(
+    comparisons = list(c("Sox2P_mTurq", "Sox2P_CDS_mTurq"), c("Sox2P_mTurq", "Sox2P_CDS_mTurq_UTR"),
+                                        c("Sox2P_CDS_mTurq", "Sox2P_CDS_mTurq_UTR")),
+    label = "p.format", method = "t.test", method.args = list(var.equal = FALSE),
+    tip.length = 0.02) +
+
+  #layout
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1),
+        legend.position = "none",
+        axis.title.x = element_blank()) +
+  ggtitle("mTurq") +
+  ylab("relative expression, not normalized") +
+  col_scale_CDS_named
+
+
+#plotting mCherry
+plot_mCherry = ggplot(tib_for_plot, aes(x = insert_name, y = rel_mCherry_raw, col = insert_group)) +
+  facet_nested(. ~ landing_pad , scales = "free_x", space = "free_x") +
+   geom_hline(data = ref_dash_lines, aes(yintercept = ref_rel_mCh), linetype = 'dashed')+
+  geom_hline(yintercept = 0) + 
+   geom_boxplot(outlier.shape = NA) +
+  geom_point(position = position_jitterdodge(jitter.width = 1.8), size = 1) +
+
+  #stats
+  stat_compare_means(
+    comparisons = list( c("minimal insert", "Sox2P_mTurq"), c("minimal insert", "Sox2P_CDS_mTurq"), c("minimal insert", "Sox2P_CDS_mTurq_UTR"),
+                        c("Sox2P_CDS_mTurq", "Sox2P_CDS_mTurq_UTR")),
+     label = "p.format", method = "t.test", method.args = list(var.equal = FALSE),
+    tip.length = 0.02) +
+
+  #layout
+  scale_y_continuous(limits = c(0, 2)) +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1),
+        legend.position = "none",
+        axis.title.x = element_blank()) +
+  ggtitle("mCherry") +
+  ylab("relative expression") +
+  col_scale_CDS_named
+
+#plotting GFP
+plot_GFP = ggplot(tib_for_plot, aes(x = insert_name, y = rel_GFP_raw, col = insert_group)) +
+  facet_nested(. ~ landing_pad , scales = "free_x", space = "free_x") +
+  geom_hline(data = ref_dash_lines, aes(yintercept = ref_rel_GFP), linetype = 'dashed')+
+  geom_hline(yintercept = 0) + 
+   geom_boxplot(outlier.shape = NA) +
+  geom_point(position = position_jitterdodge(jitter.width = 1.8), size = 1) +
+ 
+  #stats
+  stat_compare_means(
+    comparisons = list( c("minimal insert", "Sox2P_mTurq"), c("minimal insert", "Sox2P_CDS_mTurq"), c("minimal insert", "Sox2P_CDS_mTurq_UTR"),
+                        c("Sox2P_CDS_mTurq", "Sox2P_CDS_mTurq_UTR")),
+    label = "p.format", method = "t.test", method.args = list(var.equal = FALSE),
+    tip.length = 0.02) +
+
+  #layout
+  scale_y_continuous(limits = c(0, 2)) +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1),
+        legend.position = "none",
+        axis.title.x = element_blank()) +
+  ggtitle("GFP") +
+  ylab("relative expression") +
+  col_scale_CDS_named
+
+cowplot::plot_grid(plotlist = list(plot_mTurq, plot_mCherry, plot_GFP), 
+                   align = 'h', axis = c('tb'), nrow = 1)
+
+``` 
+
+### Fig S7B - mCh+ clones, new
+```{r, fig_S7B_abs_mChpos_new, fig.width=8, fig.height = 4}
+
+tib_for_plot = filter(expression_tib_comb_notnorm, type == "clone"  & experiment == "E2742" & 
+         total_cell_count >= 500 &
+         GFP_state != "GFP-" & #exclude WT (scaling to 0 GFP is meaningless)
+         mCh_state != "mCh-" #C9_mCh- and 23_mCh- are not relevant for this comparison
+         ) %>%
+  #genotyping
+  filter(is.na(insert_genotyped) | insert_genotyped == "good")
+
+ref_dash_lines = tib_for_plot %>%
+  filter(insert_group == "minimal insert") %>%
+  group_by(landing_pad) %>%
+  summarize(ref_rel_mCh = mean(rel_mCherry_raw),
+            ref_rel_GFP = mean(rel_GFP_raw))
+
+
+#plotting mTurq
+plot_mTurq = ggplot(tib_for_plot, aes(x = insert_name, y = rel_mTurq_raw, col = insert_group)) +
+  facet_nested(. ~ landing_pad , scales = "free_x", space = "free_x") +
+  geom_hline(yintercept = 1, linetype = "dashed") + 
+  geom_hline(yintercept = 0) + 
+    geom_boxplot(outlier.shape = NA) +
+  geom_point(position = position_jitterdodge(jitter.width = 1.8), size = 1) +
+
+  #stats
+  stat_compare_means(
+     ref.group = "Sox2P_mTurq",
+    label = "p.format", method = "t.test", method.args = list(var.equal = FALSE),
+   angle = 90, label.y.npc = 0.8, size = 3) +
+
+  #layout
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1),
+        legend.position = "none",
+        axis.title.x = element_blank()) +
+  ggtitle("mTurq") +
+  ylab("relative expression, not normalized") +
+  col_scale_CDS_named
+
+
+#plotting mCherry
+plot_mCherry = ggplot(tib_for_plot, aes(x = insert_name, y = rel_mCherry_raw, col = insert_group)) +
+  facet_nested(. ~ landing_pad , scales = "free_x", space = "free_x") +
+   geom_hline(data = ref_dash_lines, aes(yintercept = ref_rel_mCh), linetype = 'dashed')+
+  geom_hline(yintercept = 0) + 
+   geom_boxplot(outlier.shape = NA) +
+  geom_point(position = position_jitterdodge(jitter.width = 1.8), size = 1) +
+
+  #stats
+  stat_compare_means(
+     ref.group = "minimal insert",
+    label = "p.format", method = "t.test", method.args = list(var.equal = FALSE),
+   angle = 90, label.y.npc = 0.8, size = 3) +
+
+  #layout
+  scale_y_continuous(limits = c(0,2.5)) +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1),
+        legend.position = "none",
+        axis.title.x = element_blank()) +
+  ggtitle("mCherry") +
+  ylab("relative expression") +
+  col_scale_CDS_named
+
+library(scales)
+#plotting GFP
+plot_GFP = ggplot(tib_for_plot, aes(x = insert_name, y = rel_GFP_raw, col = insert_group)) +
+  facet_nested(. ~ landing_pad , scales = "free_x", space = "free_x") +
+  geom_hline(data = ref_dash_lines, aes(yintercept = ref_rel_GFP), linetype = 'dashed')+
+  geom_hline(yintercept = 0) + 
+   geom_boxplot(outlier.shape = NA) +
+  geom_point(position = position_jitterdodge(jitter.width = 1.8), size = 1) +
+ 
+  #stats
+  stat_compare_means(
+     ref.group = "minimal insert",
+    label = "p.format", method = "t.test", method.args = list(var.equal = FALSE),
+   angle = 90, label.y.npc = 0.8, size = 3) +
+
+
+  #layout
+  scale_y_continuous(limits = c(0, 2.5)) +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1),
+        legend.position = "none",
+        axis.title.x = element_blank()) +
+  ggtitle("GFP") +
+  ylab("relative expression") +
+  col_scale_CDS_named
+
+cowplot::plot_grid(plotlist = list(plot_mTurq, plot_mCherry, plot_GFP), 
+                   align = 'h', axis = c('tb'), nrow = 1)
+
+``` 
+
+```{r, fig_5supE_abs_mChpos_new_wobars, fig.width=8, fig.height = 4}
+tib_for_plot = filter(expression_tib_comb_notnorm, type == "clone"  & experiment == "E2742" & 
+         total_cell_count >= 500 &
+         GFP_state != "GFP-" & #exclude WT (scaling to 0 GFP is meaningless)
+         mCh_state != "mCh-" #C9_mCh- and 23_mCh- are not relevant for this comparison
+         ) %>%
+  #genotyping
+  filter(is.na(insert_genotyped) | insert_genotyped == "good")
+
+ref_dash_lines = tib_for_plot %>%
+  filter(insert_group == "minimal insert") %>%
+  group_by(landing_pad) %>%
+  summarize(ref_rel_mCh = mean(rel_mCherry_raw),
+            ref_rel_GFP = mean(rel_GFP_raw))
+
+
+#plotting mTurq
+plot_mTurq = ggplot(tib_for_plot, aes(x = insert_name, y = rel_mTurq_raw, col = insert_group)) +
+  facet_nested(. ~ landing_pad , scales = "free_x", space = "free_x") +
+  geom_hline(yintercept = 1, linetype = "dashed") + 
+  geom_hline(yintercept = 0) + 
+    geom_boxplot(outlier.shape = NA) +
+  geom_point(position = position_jitterdodge(jitter.width = 1.8), size = 1) +
+
+  #stats
+  stat_compare_means(
+        # comparisons = list(c("Sox2P_mTurq", "Sox2P_CDS_mTurq"), c("Sox2P_mTurq", "Sox2P_mTurq_CDS"),
+        #                c("Sox2P_mTurq", "Sox2P_mTurq_stop_CDS"), c("Sox2P_mTurq", "Sox2P_mTurq_PAS_CDS"),
+        #                                 c("Sox2P_mTurq", "Sox2P_mTurq_revCDS"),
+        #                 c("Sox2P_mTurq", "Sox2P_CDS_mTurq_UTR"), c("Sox2P_mTurq", "Sox2P_mTurq_CDS_UTR"),
+        #                c("Sox2P_mTurq", "Sox2P_mTurq_stop_CDS_UTR"), c("Sox2P_mTurq", "Sox2P_mTurq_PAS_CDS_UTR")),
+    ref.group = "Sox2P_mTurq",
+    label = "p.format", method = "t.test", method.args = list(var.equal = FALSE),
+   angle = 90, label.y.npc = 0.8, size = 3) +
+
+  #layout
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1),
+        legend.position = "none",
+        axis.title.x = element_blank()) +
+  ggtitle("mTurq") +
+  ylab("relative expression, not normalized") +
+  col_scale_CDS_named
+
+
+#plotting mCherry
+plot_mCherry = ggplot(tib_for_plot, aes(x = insert_name, y = rel_mCherry_raw, col = insert_group)) +
+  facet_nested(. ~ landing_pad , scales = "free_x", space = "free_x") +
+   geom_hline(data = ref_dash_lines, aes(yintercept = ref_rel_mCh), linetype = 'dashed')+
+  geom_hline(yintercept = 0) + 
+   geom_boxplot(outlier.shape = NA) +
+  geom_point(position = position_jitterdodge(jitter.width = 1.8), size = 1) +
+
+  #stats
+  stat_compare_means(
+       # comparisons = list(c("minimal insert", "Sox2P_mTurq"), c("minimal insert", "Sox2P_CDS_mTurq"), c("minimal insert", "Sox2P_mTurq_CDS"),
+       #                 c("minimal insert", "Sox2P_mTurq_stop_CDS"), c("minimal insert", "Sox2P_mTurq_PAS_CDS"),
+       #                                  c("minimal insert", "Sox2P_mTurq_revCDS"),
+       #                  c("minimal insert", "Sox2P_CDS_mTurq_UTR"), c("minimal insert", "Sox2P_mTurq_CDS_UTR"),
+       #                 c("minimal insert", "Sox2P_mTurq_stop_CDS_UTR"), c("minimal insert", "Sox2P_mTurq_PAS_CDS_UTR")),
+    ref.group = "minimal insert",
+    label = "p.format", method = "t.test", method.args = list(var.equal = FALSE),
+    angle = 90, label.y.npc = 0.8, size = 3) +
+  
+  #layout
+  scale_y_continuous(limits = c(0,2.5)) +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1),
+        legend.position = "none",
+        axis.title.x = element_blank()) +
+  ggtitle("mCherry") +
+  ylab("relative expression") +
+  col_scale_CDS_named
+
+library(scales)
+#plotting GFP
+plot_GFP = ggplot(tib_for_plot, aes(x = insert_name, y = rel_GFP_raw, col = insert_group)) +
+  facet_nested(. ~ landing_pad , scales = "free_x", space = "free_x") +
+  geom_hline(data = ref_dash_lines, aes(yintercept = ref_rel_GFP), linetype = 'dashed')+
+  geom_hline(yintercept = 0) + 
+   geom_boxplot(outlier.shape = NA) +
+  geom_point(position = position_jitterdodge(jitter.width = 1.8), size = 1) +
+ 
+  #stats
+  stat_compare_means(
+       # comparisons = list(c("minimal insert", "Sox2P_mTurq"), c("minimal insert", "Sox2P_CDS_mTurq"), c("minimal insert", "Sox2P_mTurq_CDS"),
+       #                 c("minimal insert", "Sox2P_mTurq_stop_CDS"), c("minimal insert", "Sox2P_mTurq_PAS_CDS"),
+       #                                  c("minimal insert", "Sox2P_mTurq_revCDS"),
+       #                  c("minimal insert", "Sox2P_CDS_mTurq_UTR"), c("minimal insert", "Sox2P_mTurq_CDS_UTR"),
+       #                 c("minimal insert", "Sox2P_mTurq_stop_CDS_UTR"), c("minimal insert", "Sox2P_mTurq_PAS_CDS_UTR")),
+    ref.group = "minimal insert",
+    label = "p.format", method = "t.test", method.args = list(var.equal = FALSE),
+    angle = 90, label.y.npc = 0.8, size = 3) +
+
+  #layout
+  scale_y_continuous(limits = c(0, 2.5)) +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1),
+        legend.position = "none",
+        axis.title.x = element_blank()) +
+  ggtitle("GFP") +
+  ylab("relative expression") +
+  col_scale_CDS_named
+
+cowplot::plot_grid(plotlist = list(plot_mTurq, plot_mCherry, plot_GFP), 
+                   align = 'h', axis = c('tb'), nrow = 1)
+
+``` 
+
+
+### Fig S7C - mCh- clones, old
+```{r fig_S7C_abs_mChneg_old, fig.width=8, fig.height = 4}
+
+tib_for_plot = filter(expression_tib_comb_notnorm, type == "clone"  & 
+         experiment == "E2427" &
+         total_cell_count >= 500 &
+         GFP_state != "GFP-" & #exclude WT (scaling to 0 GFP is meaningless)
+         mCh_state == "mCh-" #C9_mCh- and 23_mCh- are not relevant for this comparison
+         ) %>%
+  
+  #genotyping
+  filter(is.na(insert_genotyped) | insert_genotyped == "good") 
+
+#plotting mTurq
+plot_mTurq = ggplot(tib_for_plot, aes(x = insert_name, y = rel_mTurq_raw, col = insert_group)) +
+  facet_nested(. ~ landing_pad , scales = "free_x", space = "free_x") +
+  geom_boxplot(outlier.shape = NA) +
+  geom_point(position = position_jitterdodge(jitter.width = 1.8), size = 1) +
+  geom_hline(yintercept = 1, linetype = "dashed") + 
+  geom_hline(yintercept = 0) + 
+  
+  #stats
+    stat_compare_means(
+     ref.group = "Sox2P_mTurq",
+    label = "p.format", method = "t.test", method.args = list(var.equal = FALSE),
+   angle = 90, label.y.npc = 0.8, size = 3) +
+
+  #layout
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1),
+        legend.position = "none",
+        axis.title.x = element_blank()) +
+  ggtitle("mTurq") +
+  ylab("relative expression, not normalized") +
+  col_scale_CDS_groups
+
+
+#plotting mCherry
+plot_mCherry = ggplot(tib_for_plot, aes(x = insert_name, y = rel_mCherry_raw, col = insert_group)) +
+  facet_nested(. ~ landing_pad , scales = "free_x", space = "free_x") +
+  geom_boxplot(outlier.shape = NA) +
+  geom_point(position = position_jitterdodge(jitter.width = 1.8), size = 1) +
+  geom_hline(yintercept = 1, linetype = "dashed") + 
+  geom_hline(yintercept = 0) + 
+  
+  #stats
+  stat_compare_means(
+     ref.group = "Sox2P_mTurq",
+    label = "p.format", method = "t.test", method.args = list(var.equal = FALSE),
+   angle = 90, label.y.npc = 0.8, size = 3) +
+
+  #layout
+  scale_y_continuous(limits = c(-0.01, 2)) +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1),
+        legend.position = "none",
+        axis.title.x = element_blank()) +
+  ggtitle("mCherry") +
+  ylab("relative expression") +
+  col_scale_CDS_groups
+
+#plotting GFP
+plot_GFP = ggplot(tib_for_plot, aes(x = insert_name, y = rel_GFP_raw, col = insert_group)) +
+  facet_nested(. ~ landing_pad , scales = "free_x", space = "free_x") +
+  geom_boxplot(outlier.shape = NA) +
+  geom_point(position = position_jitterdodge(jitter.width = 1.8), size = 1) +
+  geom_hline(yintercept = 1, linetype = "dashed") + 
+  geom_hline(yintercept = 0) + 
+  
+  #stats
+    stat_compare_means(
+     ref.group = "Sox2P_mTurq",
+    label = "p.format", method = "t.test", method.args = list(var.equal = FALSE),
+   angle = 90, label.y.npc = 0.8, size = 3) +
+
+  #layout
+  scale_y_continuous(limits = c(-0.01, 2)) +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1),
+        legend.position = "none",
+        axis.title.x = element_blank()) +
+  ggtitle("GFP") +
+  ylab("relative expression") +
+  col_scale_CDS_groups
+
+cowplot::plot_grid(plotlist = list(plot_mTurq, plot_mCherry, plot_GFP), 
+                   align = 'h', axis = c('tb'), nrow = 1)
+
+``` 
+
+### Fig S7D - mCh- clones, new
+```{r fig_S7D_abs_mChneg_new, fig.width=8, fig.height = 4}
+
+tib_for_plot = filter(expression_tib_comb_notnorm, type == "clone"  & 
+         experiment == "E2759" &
+         total_cell_count >= 500 &
+         GFP_state != "GFP-" & #exclude WT (scaling to 0 GFP is meaningless)
+         mCh_state == "mCh-" #C9_mCh- and 23_mCh- are not relevant for this comparison
+         ) %>%
+  
+  #genotyping
+  filter(is.na(insert_genotyped) | insert_genotyped == "good") 
+
+#plotting mTurq
+plot_mTurq = ggplot(tib_for_plot, aes(x = insert_name, y = rel_mTurq_raw, col = insert_group)) +
+  facet_nested(. ~ landing_pad , scales = "free_x", space = "free_x") +
+  geom_boxplot(outlier.shape = NA) +
+  geom_point(position = position_jitterdodge(jitter.width = 1.8), size = 1) +
+  geom_hline(yintercept = 1, linetype = "dashed") + 
+  geom_hline(yintercept = 0) + 
+  
+  #stats
+    stat_compare_means(
+     ref.group = "Sox2P_mTurq",
+    label = "p.format", method = "t.test", method.args = list(var.equal = FALSE),
+   angle = 90, label.y.npc = 0.8, size = 3) +
+
+  #layout
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1),
+        legend.position = "none",
+        axis.title.x = element_blank()) +
+  ggtitle("mTurq") +
+  ylab("relative expression, not normalized") +
+  col_scale_CDS_groups
+
+
+#plotting mCherry
+plot_mCherry = ggplot(tib_for_plot, aes(x = insert_name, y = rel_mCherry_raw, col = insert_group)) +
+  facet_nested(. ~ landing_pad , scales = "free_x", space = "free_x") +
+  geom_boxplot(outlier.shape = NA) +
+  geom_point(position = position_jitterdodge(jitter.width = 1.8), size = 1) +
+  geom_hline(yintercept = 1, linetype = "dashed") + 
+  geom_hline(yintercept = 0) + 
+  
+  #stats
+  stat_compare_means(
+     ref.group = "Sox2P_mTurq",
+    label = "p.format", method = "t.test", method.args = list(var.equal = FALSE),
+   angle = 90, label.y.npc = 0.8, size = 3) +
+
+  #layout
+  scale_y_continuous(limits = c(-0.025, 2)) +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1),
+        legend.position = "none",
+        axis.title.x = element_blank()) +
+  ggtitle("mCherry") +
+  ylab("relative expression") +
+  col_scale_CDS_groups
+
+#plotting GFP
+plot_GFP = ggplot(tib_for_plot, aes(x = insert_name, y = rel_GFP_raw, col = insert_group)) +
+  facet_nested(. ~ landing_pad , scales = "free_x", space = "free_x") +
+  geom_boxplot(outlier.shape = NA) +
+  geom_point(position = position_jitterdodge(jitter.width = 1.8), size = 1) +
+  geom_hline(yintercept = 1, linetype = "dashed") + 
+  geom_hline(yintercept = 0) + 
+  
+  #stats
+    stat_compare_means(
+     ref.group = "Sox2P_mTurq",
+    label = "p.format", method = "t.test", method.args = list(var.equal = FALSE),
+   angle = 90, label.y.npc = 0.8, size = 3) +
+
+  #layout
+  scale_y_continuous(limits = c(-0.025, 2)) +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1),
+        legend.position = "none",
+        axis.title.x = element_blank()) +
+  ggtitle("GFP") +
+  ylab("relative expression") +
+  col_scale_CDS_groups
+
+cowplot::plot_grid(plotlist = list(plot_mTurq, plot_mCherry, plot_GFP), 
+                   align = 'h', axis = c('tb'), nrow = 1)
+
+``` 
+
+# C9_mCh flipped clones
+Show density plots for the clones we derived to use for the hopping
+From E2447
+## Pre-process data
+```{r}
+annotation_tib_E2447 = read_xlsx(path_annotation_E2447)
+
+```
+
+Load all FCS files
+```{r load_set_of_fcs_files}
+fcs_files = dir(path_fcs_files_E2447, full.names = T)
+names(fcs_files) = str_remove(str_remove(str_remove(fcs_files, '.*/'),"_Single Cells2.fcs"), "export_")
+
+matched_annotation_tib = tibble(filenames = names(fcs_files),
+                                full_filenames = fcs_files,
+                                # N_char = str_length(filenames),
+                                well_tmp = str_extract(filenames, "...$"),
+                                row = substr(well_tmp, 1, 1),
+                                col = as.numeric(substr(well_tmp, 2, 3)),
+                                well = paste0(row, col)) %>%
+  select(-c(row, col, well_tmp)) %>%
+  left_join(annotation_tib_E2447) %>%
+  filter(experiment == "E2447" & insert_genotyped == "good" | experiment == "control") %>%
+  mutate(insert_name = factor(expected_insert, 
+                              levels = c( "none", "HyTK", "37", "34", "41", "40"),
+                              labels = c(  "none","HyTK", "minimal insert", "Sox2P", "Sox2P_CDS", "Sox2P_CDS_UTR")))
+
+matched_annotation_df = data.frame(matched_annotation_tib)
+rownames(matched_annotation_df) = matched_annotation_df$filenames
+
+flowset = flowCore::read.flowSet(files = matched_annotation_tib$full_filenames, alter.names = T, truncate_max_range = F, ignore.text.offset = T)
+
+flowCore::sampleNames(flowset) = matched_annotation_tib$filenames
+pData(flowset) = matched_annotation_df
+
+flowset_fluo = flowset[,c('BL.B..530_30.A', 'YG.D..610_20.A', 'V.F..450_50.A')]
+colnames(flowset_fluo) = c("GFP", "mCherry", "mTurq")
+
+```
+
+
+```{r preprocess_fcs_data}
+total_cell_count_tmp = flowCore::keyword(flowset_fluo, "$TOT")[,'$TOT']
+total_cell_count = as.numeric(total_cell_count_tmp)
+names(total_cell_count) = names(total_cell_count_tmp)
+
+median_mTurq = sapply(1:length(flowset_fluo), function(i){
+  median(exprs(flowset_fluo[[i]])[,'mTurq'])
+})
+names(median_mTurq) = sampleNames(flowset_fluo)
+
+median_mCherry = sapply(1:length(flowset_fluo), function(i){
+  median(exprs(flowset_fluo[[i]])[,'mCherry'])
+})
+names(median_mCherry) = sampleNames(flowset_fluo)
+
+
+median_GFP = sapply(1:length(flowset_fluo), function(i){
+  median(exprs(flowset_fluo[[i]])[,'GFP'])
+})
+names(median_GFP) = sampleNames(flowset_fluo)
+
+pData(flowset_fluo)$median_mTurq = median_mTurq
+pData(flowset_fluo)$median_mCherry = median_mCherry
+pData(flowset_fluo)$median_GFP = median_GFP
+
+pData(flowset_fluo)$total_cell_count = total_cell_count
+
+```
+
+## Fig S6C - plot density plot
+Sorted by mTurq level
+```{r}
+#set up the transformations I use in the plots
+fwd_transf  = flowWorkspace::flowjo_biexp(widthBasis = -100, pos = 4.42, inverse = F)
+inv_transf = flowWorkspace::flowjo_biexp(widthBasis = -100, pos = 4.42, inverse = T)
+
+#function to draw a line at the two top peaks
+#important: the values for the geom_density_ridges quantile lines need to be sorted non-decreasingly!
+fun_high_peaks2 = function(x, ...){
+  peaks_obj = getPeaks(fwd_transf(x))
+  N_peaks_to_pick = min(2, length(peaks_obj$Peaks))
+  # N_peaks_to_pick = 1
+  top_2_peaks = order(peaks_obj$P.h, decreasing = T)[1:N_peaks_to_pick] 
+  linear_peak = inv_transf(getPeaks(fwd_transf(x))$Peaks[top_2_peaks])
+  sort(linear_peak)
+}
+
+```
+
+```{r Fig_S6C_mChpos_41clones,  fig.width= 4, fig.height = 5}
+sel_idx = pData(flowset_fluo)$total_cell_count >= 1000 & 
+  !(pData(flowset_fluo)$insert_name == "Sox2P")
+
+ggplot(flowset_fluo[sel_idx], aes(x = mTurq, fill = insert_name)) + 
+  facet_grid(factor(insert_name, levels = c("Sox2P", "Sox2P_CDS", "Sox2P_CDS_UTR", "none"))
+             ~ . , scales = 'free_y', space = 'free_y') +
+  geom_density_ridges(aes(y = fct_reorder(name, median_mTurq)),
+                      size =0.2, # rel_min_height  = 0.005,
+                      scale = 2,
+                      alpha = 0.75,
+                      quantile_lines = TRUE, quantile_fun = fun_high_peaks2, width_vline = 2) + #, 
+  ggcyto::scale_x_flowjo_biexp(widthBasis = -100, breaks = c(-10^3, 0, 10^3, 10^4, 10^5),
+                               pos = 4.42) +
+  theme_bw() +
+  theme(legend.position = 'none',
+        axis.title.y = element_blank()) +
+  col_scale_CDS_named
+```
+
+# Fig S6L - Density plots -116 kb mCh- flipped clones
+```{r fig_S6L_dens_mChneg, fig.width= 5, fig.height = 5}
+
+samples_23_mChneg_names = 
+  filter(fcs_tib, (type == "clone"  & mCh_state == "mCh-" & landing_pad == "-116 kb") | (type == "control" & landing_pad == "no insert")) %>%
+  filter(date == "CM20240206") %>%
+  filter(insert_genotyped == "good" | is.na(insert_genotyped)) %>%
+  pull(filenames)
+
+
+
+ggplot(flowset_fluo_comb[samples_23_mChneg_names], aes(x = mTurq, fill = insert_group)) + 
+  facet_grid(factor(insert_name, levels = c("Sox2P", "Sox2P_CDS", "Sox2P_CDS_UTR", "none"))
+             ~ . , scales = 'free_y', space = 'free_y') +
+  geom_density_ridges(aes(y = fct_reorder(name, median_mTurq)),
+                      size =0.2, # rel_min_height  = 0.005,
+                      scale = 2,
+                      alpha = 0.75,
+                      quantile_lines = TRUE, quantile_fun = fun_high_peaks2, width_vline = 2) + #, 
+  ggcyto::scale_x_flowjo_biexp(widthBasis = -100, breaks = c(-10^3, 0, 10^3, 10^4, 10^5),
+                               pos = 4.42) +
+  theme_bw() +
+  theme(legend.position = 'none',
+        axis.title.y = element_blank()) +
+  col_scale_CDS_groups
+
+```
+
+
+
+# Hopping experiment
+## Load data
+```{r}
+
+#load the -161kb mCh+ Sox2P_CDS data (C9_mCh_41)
+tib_C9_41 = read_tsv(path_tib_C9_41_ints) %>%
+  filter(chr %in% paste0("chr", c(1:19, "X"))) %>%
+  mutate(chr = factor(chr, levels = paste0("chr", c(1:19, "X")))) %>%
+  group_by(chr, start, end, seq, strand, replicate, experiment, launch_pad_location, insert, genotype, sample_type, sorted_gate, pool_nr, sample_name) %>%
+  summarize(read_count = sum(read_count),
+            read_count_1 = sum(read_count_1),
+            read_count_2 = sum(read_count_2), .groups = "keep") %>%
+  ungroup() %>%
+  #mark hopped integrations
+  mutate(hopped = start != 34598479)
+
+```
+
+combine and filter
+```{r}
+tib_filtered <- tib_C9_41  %>%
+    #add variables used in the plotting (old names of cell lines etc)
+  mutate(population = case_when(sample_type == "control pool" ~ "ctrl",
+                                .default = sorted_gate),
+         cell_line = case_when(launch_pad_location == "-161 kb" & insert == "Sox2P" & genotype == "WT" ~ "C9_mCh_34",
+                               launch_pad_location == "-161 kb" & insert == "Sox2P_CDS" & genotype == "WT" ~ "C9_mCh_41"
+                               ),
+         landing_pad = case_when(launch_pad_location == "-116 kb" ~ "23",
+                                 launch_pad_location == "-161 kb" ~ "C9")) %>%
+  #annotate confidence of mapping (one or both ITRs)
+  mutate(mapped_arms = case_when(read_count_1 == 0 ~ "rv_only",
+                                 read_count_2 == 0 ~ "fw_only",
+                                 read_count_1 > 0 & read_count_2 > 0 ~ "both_arms")) %>%
+
+  #filter the data
+  filter(population == "ctrl" | read_count >= 2) %>% #for ctrl distribution 1 mapping read is enough
+  filter(!(start >= 34721183 & start <= 34721192)) %>% #remove contamination from LP8
+  filter(! start %in% c(25018987, 35232946) ) %>% #remove contamination clone C1
+  filter(landing_pad  == "C9" | start != 34598479) %>% #remove contamination from LP C9
+  filter(landing_pad  == "23" | start != 34643961) %>% #remove contamination from LP 23
+  filter(landing_pad  == "C10" | start != 35478413) %>% #remove contamination from LP C10
+  filter(strand %in% c("+", "-"))
+
+
+tib_filtered_P1_strict = tib_filtered %>%
+  filter(!(population == "P1" & mapped_arms != "both_arms")) #only keep P1 integrations with 2 mapped arms
+
+all_exp = unique(tib_filtered_P1_strict$experiment)
+```
+
+
+### Add expression data
+For C9_mCh+_41 we just use the FACS data from that cell line
+```{r}
+#load median expression values (from sorting pdfs)
+median_sorted_mTurq = read_tsv(path_median_mTurq_relevant_cell_lines)
+
+#add mTurq values to the integration tibble
+tib_filtered_mTurq_vals = left_join(tib_filtered_P1_strict, median_sorted_mTurq) %>%
+  filter(population != "ctrl") %>%
+   dplyr::rename(mTurq_expr_gate = mTurq) 
+
+#check that all integrations have a fluorescence value:
+tib_filtered_mTurq_vals %>% filter(is.na(mTurq_expr_gate))
+```
+
+### Sorting statistics
+For the new expression score we need to know, per population and replicate:
+1. number of cells sorted
+2. fraction of the cells in that gate (take fraction of the mChpos/mChneg total cells, whichever is relevant for that cell_line)
+
+We add a psuedocount of 1 to all the 'recorded_count' when calculating the 'recorded_fraction', to deal with the 0 recorded cells in P1. 
+Got the sorting stats from the sorting pdfs & the labguru notes of the experiments
+
+```{r}
+sorting_stats_tib_raw = read_xlsx(path_sorting_stats) 
+
+sorting_stats_tib = sorting_stats_tib_raw %>%
+  mutate(recorded_fraction = (recorded_count + 1)/total_recorded) %>% #recorded fraction with psuedocount of 1
+  mutate(weigh_factor = recorded_fraction / sorted_count, 
+         weigh_factor_1M = weigh_factor * 1E6) # weigh factor 1M is just to make the factor more easily human readable
+```
+For C9_mCh+_41 all populations have exactly 2 replicates, so no need to adjust for replicate count
+
+
+## Fig 5C - Plot beeswarm
+```{r}
+plot_beeswarm_orange = function(TIB, CL = "C9_mCh_41", EXP = all_exp, P_RANGE = prange_zoom,
+                              PLOT_CTCF = F, PLOT_ANNOT = T,
+                              TITLE = NULL, POINT_SIZE = 0.75, RANDOM_METHOD = "quasirandom",
+                              NEXT_RANGE = NULL){
+  tib_for_plot = filter(TIB, hopped & chr == "chr3" & cell_line %in% CL & experiment %in% EXP & start >= P_RANGE[1] & start <= P_RANGE[2])
+  LP_tib_cl = select(tib_for_plot, c(cell_line, landing_pad)) %>%
+    distinct() %>% left_join(LP_tib)
+
+  ggplot(filter(tib_for_plot, hopped & chr == "chr3" & cell_line %in% CL & experiment %in% EXP),
+         aes(x = start, y = population, col = population)) +
+    {if(length(CL)>1) facet_grid(cell_line ~ .)} +  #only facet when necessary
+
+    {if (PLOT_ANNOT)
+      list( #add elements in a list, you cannot use + inside an if statement
+        # annotate enhancer
+        geom_vline(xintercept = c(start(enhancer), end(enhancer)), col = brown),
+        annotate("rect", xmin = start(enhancer), xmax = end(enhancer), ymin = -Inf, ymax = Inf, alpha = .2, fill = brown),
+        # annotate gene
+        annotate("rect", xmin = start(Sox2_gene), xmax = end(Sox2_gene), ymin = -Inf, ymax = Inf, alpha = .2, fill = 'red'),
+        geom_vline(xintercept = c(start(Sox2_gene), end(Sox2_gene)), col = 'red') )} +
+    {if(PLOT_ANNOT & length(CL)== 1)
+      geom_vline(xintercept = pull(
+        filter(LP_tib, landing_pad %in% unique(tib_for_plot$landing_pad)),
+        start),
+        col = 'darkgrey')} +
+    {if(PLOT_ANNOT & length(CL) > 1)
+       geom_vline(data = LP_tib_cl, aes(xintercept = start), col = 'darkgrey')} +
+
+    # # annotate CTCFs
+    {if(PLOT_CTCF)geom_vline(xintercept = start(CTCF_mm10.chr3_extra), col = 'darkgrey', lty="11")}+
+    {if(!is.null(NEXT_RANGE)) geom_rug(data = tibble(range = NEXT_RANGE),
+                                       aes(x = range),
+                                       fill = 'grey',
+                                       inherit.aes = F)}+
+     #annotate landing pad
+    labs(x='Genomic coordinate (Mb)',y='sorted gate') +
+
+    #datapoints
+    geom_quasirandom(alpha = 0.5, size = POINT_SIZE, varwidth = T, bandwidth = 0.8,
+                     # shape = 16, #changes to point without border, so alpha applies to the whole point
+                     method = RANDOM_METHOD,
+                     stroke = NA) +
+    geom_text(data = plyr::count(tib_for_plot, vars = c("cell_line", "population")), aes(label = paste("n = ", freq, sep = ""),
+                                                                                         x = Inf),
+              hjust = "inward", vjust = "top",
+              col = 'black') +
+    #layout:
+    theme_classic(base_size = 16) +
+    theme(legend.position = "none") +
+    scale_x_continuous(breaks = scales::pretty_breaks(n = 6), labels = scales::unit_format(scale = 1E-6, accuracy = 0.01, unit=NULL),
+                       limits=P_RANGE, expand=c(0,0)) +
+    scale_y_discrete(limits = rev, drop = F) +
+    ggtitle(TITLE) +
+    colScale7_orange
+}
+```
+
+```{r Fig_5C_beeswarm_only_prange, fig.width = 6, fig.height = 3}
+tib_for_plot = filter(tib_filtered_P1_strict, hopped & chr == "chr3" &  experiment %in% all_exp ) %>%
+  mutate(population = factor(population, levels = c("ctrl", paste0("P", 1:6))))
+
+C9_41_beesw = plot_beeswarm_orange(TIB = tib_for_plot,
+                   CL = c("C9_mCh_41"),
+                   PLOT_ANNOT = T,
+                   PLOT_CTCF = T,
+                   P_RANGE = prange_zoom_paper,
+                   POINT_SIZE = 1.5
+)
+C9_41_beesw
+```
+
+## Fig 5D - Expression score
+```{r}
+#C9_mCh+_34 5kb window
+set.seed(20240327)
+min_ints_window = 3
+N_bootstrap = 5000
+BinSize = 500
+CL = "C9_mCh_41"
+all_exp = unique(tib_filtered_mTurq_vals$experiment)
+tib_filtered_mTurq_vals = tib_filtered_mTurq_vals %>% left_join(sorting_stats_tib)
+
+
+# # calculate running mean on random sample of same size, 500 times
+# expr_score_tib = create_bootstrap_tibble(FUN = function(TIB){expr_score_function_new_weigh(TIB,
+#                                                                                               binsize = BinSize,
+#                                                                                               N_bins_window = 10,
+#                                                                                               calculation_window =  prange_zoom,
+#                                                                                               CL = CL, EXP = all_exp)},
+#                                             TIB = tib_filtered_mTurq_vals,
+#                                             N_resamples = N_bootstrap)
+# saveRDS(expr_score_tib, "/DATA/projects/Sox2/Figure_reporter_only_hopping/rds_files/CM20250327_new_expression_score_C9_mCh_41_5kb.rds")
+
+expr_score_tib = readRDS("/DATA/projects/Sox2/Figure_reporter_only_hopping/rds_files/CM20250327_new_expression_score_C9_mCh_41_5kb.rds")
+
+
+
+expr_score_sum_tib = bootstrap_summary_fun(expr_score_tib,
+                                           score_column = "expr_score_window",
+                                           conf_int = 0.95)
+
+#calculate actual expr score (for filtering # of ints per window)
+expr_score_real =
+  expr_score_function_new_weigh(tib_filtered_mTurq_vals,
+                                binsize = BinSize,
+                                N_bins_window = 10,
+                                calculation_window =  prange_zoom,
+                                CL = CL,
+                                EXP = all_exp)
+  
+expr_score_sum_tib_filt_C9_41 = left_join(expr_score_sum_tib,  expr_score_real) %>%
+  mutate(expr_score_window_median_sel = case_when(
+    total_ints_window >= min_ints_window ~ expr_score_window_median,
+    .default = NA),
+    expr_score_window_lower_sel = case_when(
+      total_ints_window >= min_ints_window ~ expr_score_window_lower,
+      .default = NA),
+    expr_score_window_upper_sel = case_when(
+      total_ints_window >= min_ints_window ~ expr_score_window_upper,
+      .default = NA)) %>%
+  mutate(cell_line = CL)
+  
+
+```
+
+```{r}
+#load the bootstrapped data from C9_mCh_34 (generated in fig2)
+expr_score_sum_tib_filt_C9_34 = readRDS(path_expr_score_bootstrap_C9_mCh_34)
+
+expr_sum_tib_filt_comb = bind_rows(expr_score_sum_tib_filt_C9_34, expr_score_sum_tib_filt_C9_41)
+```
+
+
+###  Fig 5D - Plot
+```{r Fig_5D_expr_plot_34_41, fig.width=6, fig.height = 4}
+
+expr_plot_C9 = ggplot(expr_sum_tib_filt_comb, aes(x = mid_interval)) +
+  # annotate enhancer
+  list(
+    annotate("rect", xmin = start(enhancer), xmax = end(enhancer), ymin = -Inf, ymax = Inf, alpha = .2, fill = brown),
+    geom_vline(xintercept = c(start(enhancer), end(enhancer)), col = brown),
+    # annotate gene
+    annotate("rect", xmin = start(Sox2_gene), xmax = end(Sox2_gene), ymin = -Inf, ymax = Inf,alpha = .2, fill = 'red'),
+    geom_vline(xintercept = c(start(Sox2_gene), end(Sox2_gene)), col = 'red'),
+    geom_vline(xintercept = start(landingPad_C9), col = 'darkgrey'),
+    geom_vline(xintercept = start(CTCF_mm10.chr3_extra), col = 'darkgrey',linetype = 'dotted')
+  ) +
+
+  ## plot the confidence interval based on the resampled data
+  geom_ribbon(aes(ymin = expr_score_window_lower_sel, ymax = expr_score_window_upper_sel,
+                  fill = cell_line), alpha = 0.3) +
+  # geom_line( aes(y = expr_score_window_mean), col = 'orange') +
+  ## plot the median based on the resampled data
+  geom_line(aes(y = expr_score_window_median_sel, col = cell_line)) +
+
+  #axes
+  scale_x_continuous(breaks = scales::pretty_breaks(n = 6), labels = scales::unit_format(scale = 1E-6, accuracy = 0.01, unit=NULL),
+                     limits=prange_zoom_paper, expand=c(0,0)) +
+  scale_y_continuous(expand=expansion(mult = c(0, 0.05)),
+                     breaks = scales::pretty_breaks(n=6),
+                     limits = c(0, NA)) +
+  labs(x='Genomic coordinate (Mb)',y='expression score') +
+  theme_classic(base_size = 16) +
+  theme(legend.position = 'none') +
+  col_scale_CDS_cl
+expr_plot_C9
+
+```
+
+### Fig 5CD - Plot
+```{r Fig_5CD_beesw_with_expr_plot_34_41, fig.width=6, fig.height = 6}
+cowplot::plot_grid(plotlist = list(C9_41_beesw, expr_plot_C9),
+                   align = 'v', axis = c('lr'), ncol = 1)
+
+```
+
+# FACS data sorter
+## load FACSDiva file
+```{r}
+library(openCyto)
+library(CytoML)
+library(flowWorkspace)
+
+
+diva_ws <- open_diva_xml(diva_xml_file)
+
+
+gs <- diva_to_gatingset(diva_ws,
+                        name = 1, #the group to import
+                        path = path_FACS_sorting_E2555,
+                        #swapped columns are a known diva 'bug', for some files you need to 'unswap' them, default is T (as necessary for this file)
+                        # swap_cols = F,
+                        worksheet = "global",
+                        verbose = F,
+                        execute = T)
+
+pdata_tib = pData(gs) %>%
+  as_tibble() %>%
+  mutate(name_short = str_remove(str_remove(name, "ME2024050._E2534_rep._"), "_([0-9]){3}.fcs"),
+         replicate = str_extract(name_short, "rep.$"),
+         cell_line = case_when(grepl("WT", name_short) ~ "WT",
+                               grepl("F121_9", name_short) ~ "F121_9",
+                               grepl("23_34A", name_short) ~ "23_34A",
+                               .default = str_extract(name_short, "C9_.._mCh.")),
+
+         treatment = case_when(grepl("PB", name_short) ~ "PB",
+                               grepl("SB", name_short) ~ "SB",
+                               .default = "untreated"),
+         recording = case_when(grepl("_SORT", name_short) ~ "sorting",
+                               .default = "pre-recording"),
+         sample_type = case_when(cell_line %in% c("WT", "F121_9", "23_34A") | treatment == "untreated" ~ "control",
+                                 .default = "sample")
+  ) %>%
+  mutate(construct = case_when(cell_line %in% c("WT", "F121_9") ~ "none",
+                                cell_line == c("23_34A") ~ "34",
+                                .default = str_extract(cell_line, "([0-9]){2}")),
+         mCh_status = case_when(cell_line == "WT" ~ "mCh-",
+                                cell_line %in% c("23_34A", "F121_9") ~ "mCh+",
+                                .default = str_extract(cell_line, "mCh.")))
+
+
+pdata_df = as.data.frame(pdata_tib)
+rownames(pdata_df) = pdata_df$name
+
+pData(gs) = pdata_df
+```
+
+Load replicate 2:
+```{r}
+diva_ws2 <- open_diva_xml(diva_xml_file2)
+
+
+gs2 <- diva_to_gatingset(diva_ws2,
+                        name = 1, #the group to import
+                        path = path_FACS_sorting_E2555,
+                        swap_cols = F, #apparently we don't need to swap the FSC/SSC-H/W here
+                        worksheet = "global",
+                        verbose = F,
+                        execute = T)
+
+pdata_tib2 = pData(gs2) %>%
+  as_tibble() %>%
+  mutate(name_short = str_remove(str_remove(name, "ME2024050._E2534_rep._"), "_([0-9]){3}.fcs"),
+         replicate = str_extract(name_short, "rep.$"),
+         cell_line = case_when(grepl("WT", name_short) ~ "WT",
+                               grepl("F121_9", name_short) ~ "F121_9",
+                               grepl("23_34A", name_short) ~ "23_34A",
+                               .default = str_extract(name_short, "C9_.._mCh.")),
+
+         treatment = case_when(grepl("PB", name_short) ~ "PB",
+                               grepl("SB", name_short) ~ "SB",
+                               .default = "untreated"),
+         recording = case_when(grepl("_SORT", name_short) ~ "sorting",
+                               .default = "pre-recording"),
+         sample_type = case_when(cell_line %in% c("WT", "F121_9", "23_34A") | treatment == "untreated" ~ "control",
+                                 .default = "sample")
+  ) %>%
+  mutate(construct = case_when(cell_line %in% c("WT", "F121_9") ~ "none",
+                                cell_line == c("23_34A") ~ "34",
+                                .default = str_extract(cell_line, "([0-9]){2}")),
+         mCh_status = case_when(cell_line == "WT" ~ "mCh-",
+                                cell_line %in% c("23_34A", "F121_9") ~ "mCh+",
+                                .default = str_extract(cell_line, "mCh.")))
+
+
+pdata_df2 = as.data.frame(pdata_tib2)
+rownames(pdata_df2) = pdata_df2$name
+
+pData(gs2) = pdata_df2
+```
+
+## Fig S6F - mCh+ cell lines
+```{r, sup_Fig_5F_plot_FACS_41, height = 3, width = 6}
+
+gs_oi_mChpos = subset(gs, sample_type == "sample"  & mCh_status == "mCh+" & construct == "41" &
+                        (recording == "sorting" | treatment == "PB")) #sorting only, combining 2 data sets doesn't give the right percentages on the gates
+
+ggcyto::ggcyto(gs_oi_mChpos, aes(x = "GFP", y = "mTurqoise2"), subset = "mCh_pos") +
+  #facet by cell line / treatment
+  facet_grid(. ~ treatment) +
+
+  #plot cells
+  geom_hex(bins = 128, aes( fill = after_stat(ncount))) +
+  scale_fill_distiller(palette = 'Spectral') + #manually adding a fill scale also forces the scale to be linear again.
+
+  #plot_gates
+  ggcyto::geom_gate(paste0("P", 1:6, "_mCh+"), col = 'black') +
+  ggcyto::geom_stats(adjust = c(-0.3, 0.5), digits = 2, size = 5) +
+
+  #layout
+  theme_bw(base_size = 14) +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        legend.position = "none",
+        aspect.ratio = 1) +
+  ggtitle(element_blank())+
+  ggcyto::axis_x_inverse_trans() +
+  ggcyto::axis_y_inverse_trans() +
+  ggcyto::ggcyto_par_set(limits = list(x = c(1.2, 4), y = c(0, 4.2))) +
+  scale_y_continuous(expand = c(0,0)) +
+  scale_x_continuous(expand = c(0,0))+
+  ggcyto::labs_cyto(labels = "marker")
+
+```
+
+## Normalization
+There is a default function to get the median fluorescent intensity (MFI) per fluorophore per gate:
+
+```{r}
+
+#here I get the single cells, that gate is called 'P4', don't confuse with the mTurq expression gate P4 (which is 'P4_mCh+' or 'P4_mCh-')
+ctrl_samples_MFI = gs_pop_get_stats(gs, paste0("P4"), type = pop.MFI, inverse.transform = T)
+ctrl_samples_MFI_tib1 = as_tibble(ctrl_samples_MFI) %>%
+  left_join(pData(gs), by = join_by(sample == name)) %>%
+  filter(treatment == "untreated" &
+           !cell_line %in% c("C9_34_mCh-", "C9_41_mCh-"))%>%
+  mutate(rel_mCh = mCherry/GFP,
+         rel_mT = mTurqoise2/GFP,
+         replicate = "rep1",
+         pop = "single_cells")
+
+ctrl_samples_MFI2 = gs_pop_get_stats(gs2, paste0("P4"), type = pop.MFI, inverse.transform = T)
+ctrl_samples_MFI_tib2 = as_tibble(ctrl_samples_MFI2) %>%
+  left_join(pData(gs2), by = join_by(sample == name)) %>%
+  filter(treatment == "untreated" &
+           !cell_line %in% c("C9_34_mCh-", "C9_41_mCh-"))%>%
+  mutate(rel_mCh = mCherry/GFP,
+         rel_mT = mTurqoise2/GFP,
+         replicate = "rep2",
+         pop = "single_cells")
+
+ctrl_samples_MFI_tib = bind_rows(ctrl_samples_MFI_tib1, ctrl_samples_MFI_tib2)
+
+# normalization
+MFI_WT_ctrl = ctrl_samples_MFI_tib %>%
+  filter(cell_line == 'WT') %>%
+  mutate(GFP_WT = GFP, mTurq_WT = mTurqoise2, mCh_WT = mCherry) %>%
+  select(replicate, GFP_WT, mTurq_WT, mCh_WT)
+
+MFI_ctrl_tib2 = ctrl_samples_MFI_tib %>%
+  left_join(MFI_WT_ctrl) %>%
+  mutate(GFP_cor = GFP - GFP_WT,
+         mTurq_cor = mTurqoise2 - mTurq_WT,
+         mCh_cor = mCherry - mCh_WT) %>%
+  mutate(mTurq_norm = mTurq_cor / GFP_cor,
+         mCh_norm = mCh_cor / GFP_cor)
+
+MFI_23_34A = MFI_ctrl_tib2 %>%
+  filter(cell_line == "23_34A") %>%
+  mutate(mTurq_norm_ctrl = mTurq_norm,
+         mCh_norm_ctrl = mCh_norm) %>%
+  select(replicate, mTurq_norm_ctrl, mCh_norm_ctrl)
+
+```
+
+## Plot individual cells P2-P4
+extract the individual data for P2-P4 (mCh+ sorting data)
+```{r}
+gs_oi_mChpos = subset(gs, sample_type == "sample"  & treatment == "SB"  & mCh_status == "mCh+")
+gs_oi_mChpos2 = subset(gs2, sample_type == "sample"  & treatment == "SB" & mCh_status == "mCh+")
+
+#replicate 1
+exprs_P24_ls = lapply(1:2, function(cl){
+  exprs_per_rep_ls = lapply(c("P2", "P3", "P4"), function(pop){
+    gatename = paste0(pop, "_mCh+")
+    data_pop = gh_pop_get_data(gs_oi_mChpos[[cl]], gatename, inverse.transform = T)
+    as_tibble(flowCore::exprs(data_pop))
+  })
+  names(exprs_per_rep_ls) = c("P2", "P3", "P4")
+  exprs_rep_tib = bind_rows(exprs_per_rep_ls, .id = "population") %>% as_tibble()
+})
+names(exprs_P24_ls) = c("C9_34_mCh+", "C9_41_mCh+")
+exprs_P24_tib = bind_rows(exprs_P24_ls, .id = "cell_line") %>% as_tibble() %>% mutate(replicate = "rep1")
+
+#replicate 2
+exprs_P24_ls2 = lapply(1:2, function(cl){
+  exprs_per_rep_ls = lapply(c("P2", "P3", "P4"), function(pop){
+    gatename = paste0(pop, "_mCh+")
+    data_pop = gh_pop_get_data(gs_oi_mChpos2[[cl]], gatename, inverse.transform = T)
+    as_tibble(flowCore::exprs(data_pop))
+  })
+  names(exprs_per_rep_ls) = c("P2", "P3", "P4")
+  exprs_rep_tib = bind_rows(exprs_per_rep_ls, .id = "population") %>% as_tibble()
+})
+names(exprs_P24_ls2) = c("C9_34_mCh+", "C9_41_mCh+")
+exprs_P24_tib2 = bind_rows(exprs_P24_ls2, .id = "cell_line") %>% as_tibble() %>% mutate(replicate = "rep2")
+
+# combine and normalize
+exprs_P24_tib_comb = bind_rows(exprs_P24_tib, exprs_P24_tib2)
+
+exprs_P24_tib_norm = exprs_P24_tib_comb %>%
+  left_join(MFI_WT_ctrl) %>%
+    mutate(GFP_cor = `BL[B] 530/30-A` - GFP_WT,
+         mTurq_cor = `V[F] 450/50-A` - mTurq_WT,
+         mCh_cor = `YG[D] 610/20-A` - mCh_WT) %>%
+  mutate(mTurq_norm = mTurq_cor / GFP_cor,
+         mCh_norm = mCh_cor / GFP_cor) %>%
+  left_join(MFI_23_34A) %>%
+  mutate(rel_mTurq_norm = mTurq_norm / mTurq_norm_ctrl,
+         rel_mCh_norm = mCh_norm / mCh_norm_ctrl)
+```
+
+## Fig 5E - rel_mCh_hopping_cut_axis
+```{r Fig_5E_rel_mCh_hopping_cut_axis, fig.width = 5, fig.height = 5}
+#here I flip the axis to make it more interpretable, since we want to see the effect of mTurq (x) on mCherry (y)
+
+ggplot(exprs_P24_tib_norm, aes(x = rel_mTurq_norm, y = rel_mCh_norm, col = cell_line, fill = cell_line)) +
+  # facet_grid(replicate ~ cell_line) +
+  geom_point(alpha = 0.5) +
+  coord_cartesian(xlim = c(0, 30), ylim = c(0, 1.5), expand = F) +
+  geom_smooth(method = "lm")+
+  stat_cor(method = 'spearman',label.x.npc = 1, label.y.npc = 0, hjust = 1)+
+  labs(x = "relative reporter expression (mTurq)", y = "relative Sox2::mCherry expression") +
+  theme_classic(base_size = 14) +
+  col_scale_CDS_cl_FACS +
+  theme(legend.position = "bottom",
+        aspect.ratio = 1)
+```
+
+## Fig S6G - rel_mCh_hopping_all_data
+```{r sup_F_rel_mCh_hopping_all_data, fig.width = 5, fig.height = 5}
+
+ggplot(exprs_P24_tib_norm, aes(x = rel_mTurq_norm, y = rel_mCh_norm, col = cell_line, fill = cell_line)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth(method = "lm")+
+  stat_cor(method = 'spearman',label.x.npc = 1, label.y.npc = 1, hjust = 1)+
+  labs(x = "relative reporter expression (mTurq)", y = "relative Sox2::mCherry expression") +
+  theme_classic(base_size = 14) +
+  col_scale_CDS_cl_FACS +
+  theme(legend.position = "bottom",
+        aspect.ratio = 1)
+```
+
+
+## plot SCR-Sox2 interaction
+Code for generating Figure S6B can be found in the github of Mikhail Magnitov (https://github.com/magnitov/sox2_rcmc).
+
+
+# RNA stability CDS constructs
+We wanted to check whether the addition of the CDS changes the stability of the produced RNA.
+For this we did RNA degradation timecourses, followed by qPCR.
+
+```{r}
+#load the raw cq values 
+tib_qPCR_raw = read_xlsx(path_qPCR_RNA_stability )
+
+#preprocessing
+tib_qPCR_all = tib_qPCR_raw %>%
+  #calculate mean of 3 technical replicates
+  mutate(Cq_mean = rowMeans(select(., Cq_1, Cq_2, Cq_3), na.rm = TRUE)) %>%
+  #fold change over t0
+  group_by(Cell_line, target, rep) %>%
+  mutate(delta_Cq = Cq_mean - Cq_mean[time == 0]) %>%
+  ungroup() %>%
+  #convert to linear scale
+  mutate(abundance = 2^(-delta_Cq)) %>%
+  #sd on the technical replicates
+  mutate(Cq_sd = apply(select(., Cq_1, Cq_2, Cq_3), 1, sd, na.rm = TRUE))
+
+
+```
+
+## Fig S6D - RNA degradation curve
+Calculate and plot SD of replicates for delta Ct, normalized to T0
+```{r}
+# Step 1: Compute mean and SD for Fold Change across replicates
+plot_data_deltaCt <- tib_qPCR_all %>%
+  group_by(Cell_line, target, time) %>%
+  summarise(
+    abundance_Mean = mean(abundance),
+    abundance_Change_SD = sd(abundance),
+    .groups = "drop"
+  )
+```
+
+```{r Fig_S6D_RNA_degradation_curve, fig.width=5, fig.height=5}
+
+plot_data_deltaCt %>%
+  mutate(target_spec = case_when(target == "mTurq" ~ paste0(Cell_line, "_", target),
+                                 .default = target)) %>%
+  mutate(interesting_lines = case_when(target == "mTurq" ~ "interesting",
+                                    .default = "control"),
+         interesting_lines = factor(interesting_lines, levels =c("interesting", "control"))) %>%
+  # mutate(line_thickness = case_when(target == "mTurq" ~ "thicker",
+  #                                   .default = "normal")) %>%
+  filter(target != "sox2") %>%
+  dplyr::arrange(match(target, c("gfp", "mCherry", "actin", "gapdh", "mTurq")) ) %>%
+  ggplot(aes(x = time, y = abundance_Mean, group = interaction(Cell_line, target_spec), 
+             col = target_spec)) + #linetype = Cell_line, 
+  geom_line(aes(linetype = interesting_lines, linewidth = interesting_lines))+
+  # geom_line(aes(linewidth = line_thickness)) +
+  geom_point(size = 2) +
+  geom_errorbar(aes(ymin = abundance_Mean - abundance_Change_SD, 
+                    ymax = abundance_Mean + abundance_Change_SD),  
+                width = 0.2) +
+  # facet_wrap(~Cell_line) +
+  scale_y_log10() + # Log scale for better visualization
+  labs(
+    # title = "RNA abundance relative to T0",
+    x = "Time (hours)",
+    y = "relative RNA abundance (log scale)"
+  ) +
+  theme_bw() +
+  theme(#legend.position = "none",
+        aspect.ratio = 0.8) +
+  scale_color_manual(
+    values = c(
+      "gfp" = "#6ed17c",
+      "mCherry" = "#ff3fb1",
+      # "gfp" = "#39B54A",
+      # "mCherry" = "#EC008C",
+      "SoxP_mTurq" = '#0077BB',
+      "SoxP CDS_mTurq" = "#EE7733",
+      "SoxP UTR_mTurq" = "#bd4d0e",
+      "actin" = "lightgrey",
+      "gapdh" = "darkgrey")
+    ) +
+    scale_linewidth_manual(values = c("interesting" = 1.2, "control" = 0.7))
+```
+
+## Fig S6E - RNA half live
+### Fitting a non linear model (exponential decay) to data, calculate half-live
+```{r}
+
+tib_model = tib_qPCR_all %>% group_by(Cell_line, target, rep) %>%
+  select(Cell_line, target, rep, time, abundance) %>%
+  arrange(time)
+
+# Fit the model for each group
+fit_results <- tib_model %>%
+  nest(data = c(time, abundance)) %>%
+  mutate(
+    model = map(data, ~nls(abundance ~ Y0 * exp(-k * time), 
+                           data = .x, 
+                           start = list(Y0 = 1, k = 0.1))),
+    params = map(model, broom::tidy)  # Extract model parameters
+  )
+
+# Extract and view fitted parameters
+params <- fit_results %>%
+  unnest(params)
+
+params
+
+
+# Add half-life calculation
+params <- params %>%
+  filter(term == "k") %>%
+  mutate(half_life = log(2) / estimate)
+
+params
+```
+
+### plot
+Make again, just with faceting
+```{r S6E_half_lives_Sox2, fig.width=3, fig.height=3}
+
+tib_half_live_mTurq = params %>% 
+  #filter(target == "mTurq") %>% 
+  select(Cell_line, half_life, target, rep) %>%
+  group_by(Cell_line, target) %>% 
+  summarise(mean_half_life = mean(half_life),
+            half_live_sd = sd(half_life),
+            .groups = "drop")
+
+
+tib_for_plot = params %>% filter(target %in% c("gfp", "mCherry", "mTurq")) %>%
+    mutate(target_spec = case_when(target == "mTurq" ~ paste0(Cell_line, "_", target),
+                                 .default = target))
+
+means_for_plot = tib_for_plot %>% group_by(Cell_line, target, target_spec) %>%
+      summarise(mean_half_life = mean(half_life), .groups = "drop")
+  
+ggplot(tib_for_plot, aes(x = target, 
+           y = half_life, 
+           color = target_spec)) +
+  facet_grid(.~Cell_line, scales = "free_x")+
+  # Points for each (target, cell line) combination
+  geom_jitter(width = 0.2, size = 1) +
+  
+    # Add horizontal line for mean
+  geom_errorbar(data = means_for_plot,
+   aes(ymin = mean_half_life, ymax = mean_half_life, x = target, col = target_spec),
+    width = 0.7,
+   size = 1,  # Thickness of the line
+    inherit.aes = FALSE) +  # Prevents ggplot from using global aesthetics
+ 
+  scale_y_continuous(limits = c(0, NA),
+                     name = "Half-life (hours)") +
+  theme_bw(base_size = 14) +
+
+  # ggtitle("Comparing RNA Half-lives Across Cell Lines") +
+  theme(panel.grid.major.x = element_blank(),
+        panel.grid.minor.y = element_blank(),
+        aspect.ratio = 1.5,
+        legend.position = 'none') +
+  scale_color_manual(
+    values = c(
+      "gfp" = "#39B54A",
+      "mCherry" = "#EC008C",
+      "SoxP_mTurq" = '#0077BB',
+      "SoxP CDS_mTurq" = "#EE7733",
+      "SoxP UTR_mTurq" = "#bd4d0e")
+    ) 
+
+```
+
+
+# Fig S6J - ChIP on CDS
+Explore whether there is evidence for TF binding on the CDS.
+Steps:
+1. Use the JASPAR called motifs (downloaded from the UCSC genome browser track) to find all motifs on the CDS
+2. Overlay with cistrome ChIP datasets, to find the motifs that have a peak overlaying it.
+3. Manually check the ChIP datasets, remove all sets that are wrongly annotated, not actually mESCs or perturbation conditions.
+4. Plot 1 dataset per found TF.
+
+## 1. JASPAR
+
+Download the full list of nonredundant, vertebrate core JASPAR motifs from the JASPAR website (to get the TF names).
+```{r}
+jaspar_motifs_file = readLines(path_JASPAR_motifs) 
+jaspar_motifs_names_lines = jaspar_motifs_file[grepl("^>", jaspar_motifs_file)]
+
+jaspar_motifs_names = tibble(Motif_ID = str_remove(str_remove(jaspar_motifs_names_lines, "^>"), "\t.*$"),
+                             Factor = toupper(str_remove(jaspar_motifs_names_lines, "^.*\t")))
+```
+
+
+Exported the JASPAR mapped motifs from the prange_Sox2_gene_gr (chr3 34630000-34680000) from the UCSC JASPAR track (and saved).
+Filter for a score of 300, this corresponds to a maximum p-value of 10^-3
+```{r}
+motifs_on_roi = read_tsv(path_JASPAR_mapped_motifs_Sox2, col_names = c("seqnames", 'start','end', 'Motif_ID', 'score', 'strand'))
+
+motifs_on_roi_filt = motifs_on_roi %>% 
+  filter(score >= 300) %>%
+  left_join(jaspar_motifs_names)
+
+#split the double motifs, chip of either factor needs to be matched
+double_motifs = motifs_on_roi_filt %>% 
+  as_tibble() %>% 
+  filter(grepl("::", Factor))%>%
+  mutate(Factor1 = str_remove(Factor, "::.*$"),
+         Factor2 = str_remove(Factor, "^.*::")) %>%
+  dplyr::rename(full_factor = Factor) %>%
+  pivot_longer(cols = c(Factor1, Factor2), names_to = 'halfmotif', values_to = 'Factor')
+
+motifs_on_roi_filt_all = as_tibble(motifs_on_roi_filt)  %>% bind_rows(double_motifs)
+
+```
+
+Define regions
+```{r}
+
+Sox2_CDS_gr = GRanges('chr3:34650415-34651375')
+
+```
+
+extract motifs
+```{r}
+motifs_on_roi_filt_gene_all  = subsetByOverlaps(GRanges(motifs_on_roi_filt_all), Sox2_CDS_gr, ignore.strand = T)
+
+
+```
+
+## 2. Cistrome 
+
+Load the overview table of all datasets
+```{r}
+cistrome_all_datasets_tib = read_tsv(path_cistrome_overview_table)
+
+cistrome_mESC_tib = cistrome_all_datasets_tib %>% filter(Cell_type == "Embryonic Stem Cell")
+
+```
+
+Filter for the factors with a motif on the CDS
+```{r}
+
+cistrome_mESC_tfoi = cistrome_mESC_tib %>% filter(Factor %in% unique(motifs_on_roi_filt_gene_all$Factor))
+
+
+N_motif_roi = length(unique(motifs_on_roi_filt_gene_all$Factor))
+N_motif_roi
+N_ChIP_roi = length(unique(cistrome_mESC_tfoi$Factor))
+N_ChIP_roi
+```
+
+
+Overlap cistrome peaks with the motifs
+```{r}
+
+extraCols_narrowPeak <- c(singnalValue = "numeric", pValue = "numeric",
+                            qValue = "numeric", peak = "integer")
+
+peaks_on_motifs_ls = lapply(cistrome_mESC_tfoi$DCid, function(id){
+  # print(id)
+  #load the tf motifS
+  tf = cistrome_mESC_tfoi$Factor[cistrome_mESC_tfoi$DCid == id]
+  tf_motifs = motifs_on_roi_filt_gene_all[motifs_on_roi_filt_gene_all$Factor == tf,] %>% GRanges()
+  
+  #load the tf peaks
+  file_tf = paste0(path_cistrome_peak_folder, id, "_sort_peaks.narrowPeak.bed")
+  tf_narrowPeak <- import.bed(file_tf,
+                              extraCols = extraCols_narrowPeak)
+  
+  #find overlaps
+  overlaps = findOverlaps(tf_narrowPeak, tf_motifs, ignore.strand = T)
+  
+  #get the motifs that have overlaps, with annotation
+  motif_oi_tib = as_tibble(tf_motifs[subjectHits(overlaps)]) %>%
+    mutate(peak_hit_number = queryHits(overlaps),
+           DCid = id)
+  
+  #combine with the peak information
+  peak_oi_tib = as_tibble(tf_narrowPeak[queryHits(overlaps)]) %>%
+    mutate(peak_hit_number = queryHits(overlaps)) %>%
+    unique()%>%
+    full_join(motif_oi_tib, join_by(peak_hit_number), suffix = c('.peak', '.motif'))
+  
+  peak_oi_tib
+})
+
+peaks_on_motifs = bind_rows(peaks_on_motifs_ls)
+
+
+```
+
+
+
+
+## 3. check and download chip
+
+I manually check the datasets that give a hit.
+Remove the following ones (DCid)
+
+59471:59474,#not ZFP57 chip
+48327, 48329, #not SPI1
+55144, #not mESC
+58293, 58294, #NRF1 overexpression
+
+449, #SMAD2: pSmad2 ChIPSeq of ES cells treated for 18 hours in 10uM SB
+33779, 33721, 33762, 33794, 33755, #Pou5f1 ChIp after Sox2 or Sox17 overexpression
+34041, #embryoid bodies, not mESC
+35374, # Dnmt3a-/-Dnmt3b-/-(DKO)
+44552, #klf4 overexpression
+48489, #GSM1355156 was deleted by the GEO staff on Feb 29, 2016. (rep2 is still on geo, but not showing up in our list) Manually checked, rep1 and 2 look completely different so I suspect there is something wrong with the rep1 (which showed a 'peak' in our data)
+52799, #treatment:  1um Retinoic Acid (RA) for 48hrs (other RXRA sample is the ES sample, that one is okay)
+53113, # ESC+SB to induce endoderm differentiation
+53680, # c-Jun was induced by dox for 36h, using c-Jun antibody performed ChIP-seq
+73465, #PARP-1KO (and the WT ES samples do not show up in our analysis)
+76355, # mitotic arrest, the asynchronous samples do not show up in our analyiss
+81307, 81310, 82115 #one of these samples it the input samples, the other the actual IP samples, they look the same and both have peaks, so no actual signal
+
+
+Programmatically download the ChIP tracks
+
+```{r}
+peaks_oi = peaks_on_motifs %>% filter(end.motif >= 34650415 & start.motif <= 34652461)  %>%
+  filter(!DCid %in% c(
+    59471:59474,#not ZFP57 chip
+    48327, 48329, #not SPI1
+    55144, #not mESC
+    58293, 58294, #NRF1 overexpression
+    449, #SMAD2: pSmad2 ChIPSeq of ES cells treated for 18 hours in 10uM SB
+    33779, 33721, 33762, 33794, 33755, #Pou5f1 ChIp after Sox2 or Sox17 overexpression
+    34041, #embryoid bodies, not mESC
+    35374, # Dnmt3a-/-Dnmt3b-/-(DKO)
+    44552, #klf4 overexpression
+    48489, #GSM1355156 was deleted by the GEO staff on Feb 29, 2016. (rep2 is still on geo, but not showing up in our list) Manually checked, rep1 and 2 look completely different so I suspect there is something wrong with the rep1 (which showed a 'peak' in our data)
+    52799, #treatment:  1um Retinoic Acid (RA) for 48hrs (other RXRA sample is the ES sample, that one is okay)
+    53113, # ESC+SB to induce endoderm differentiation
+    53680, # c-Jun was induced by dox for 36h, using c-Jun antibody performed ChIP-seq
+    73465, #PARP-1KO (and the WT ES samples do not show up in our analysis)
+    76355, # mitotic arrest, the asynchronous samples do not show up in our analyiss
+    81307, 81310, 82115 #one of these samples it the input samples, the other the actual IP samples, they look the same and both have peaks, so no actual signal
+  )) 
+files_oi = peaks_oi %>% select(DCid, Factor) %>% unique()
+
+DCid_to_download = files_oi$DCid
+TF_name_DCid = files_oi$Factor
+
+
+# lapply(1:length(DCid_to_download), function(i){
+#   url_cistrome = paste0('http://dc2.cistrome.org//genome_browser/bw/', DCid_to_download[i],'_treat.bw')
+#   folder_to_make = paste0(path_cistrome_bw_folder, TF_name_DCid[i])
+#   filename_to_make = paste0(folder_to_make, "/", TF_name_DCid[i], "_", DCid_to_download[i], ".bw")
+# 
+#   dir.create(folder_to_make, showWarnings = FALSE)
+#   if (!file.exists(filename_to_make)) {
+#     download.file(url_cistrome, filename_to_make)
+#   }
+# })
+
+cistrome_mESC_tfoi %>% filter(DCid %in% peaks_oi$DCid)
+
+
+```
+
+## 4. Plot filtered 
+We want to plot only 1 track per TF. When there are 2 from the same experiment, just use rep1
+For Pou5F1 (oct4) there are two different datasets. I take 52773  (the most recent dataset), which is completely untreated samples whereas the other one is a control shLuc transfection.
+
+```{r}
+data_oi_filt = peaks_oi %>% 
+  filter(end.motif >= 34650415 & start.motif <= 34651375)  %>%
+  select(DCid, Factor) %>% unique() %>%
+  filter(!DCid %in% c(51365, 53133, #only keep rep1
+                      38632 #only keep 1 Pou5f1 experiment
+                      ))
+
+tf_file_filtered_ls = lapply(1:length(data_oi_filt$DCid), function(i){
+  paste0(path_cistrome_bw_folder, data_oi_filt$Factor[i], "/", data_oi_filt$Factor[i], "_", data_oi_filt$DCid[i], ".bw")
+})
+names(tf_file_filtered_ls) = paste0(1:length(data_oi_filt$DCid), "_", data_oi_filt$Factor)
+
+
+```
+
+```{r fig.width = 6, fig.height = 5}
+
+Sox2_gene_annot = tibble(txStart =34649994 , 
+                         txEnd = 34652461 ,
+                         cdsStart= 34650415,
+                         cdsEnd = 34651375)
+
+
+
+
+plot_limits_ChIP =  c(34646500, 34656000)
+
+plot_ls = lapply(order(data_oi_filt$Factor), #this takes the Factors in alphabetical order
+                 function(i) {
+                   BigwigTrack(GRanges('chr3:34646500-34656000'), 
+                               paste0(path_cistrome_bw_folder, data_oi_filt$Factor[i], "/", data_oi_filt$Factor[i], "_", data_oi_filt$DCid[i], ".bw"),
+                               smooth = 100) +
+                     scale_x_continuous(expand= c(0,0), limits = plot_limits_ChIP) +
+                     ylab(data_oi_filt$Factor[i]) +
+                     # geom_vline(data = filter(motifs_on_roi_filt_all, Factor == data_oi_filt$Factor[i] & score >300),
+                     #            aes(xintercept = start), col = 'green4') +
+                     geom_rug(data = filter(motifs_on_roi_filt_all, Factor == data_oi_filt$Factor[i] & score >300),
+                                aes(x = start), col = 'black', length = unit(0.2, "npc"), inherit.aes = F) +
+                     annotate("rect", xmin = Sox2_gene_annot$cdsStart, xmax = Sox2_gene_annot$cdsEnd, ymin = -Inf, ymax = Inf,alpha = .2, fill = 'red')+
+                     theme(legend.position = 'none',
+                           axis.title.x = element_blank(),
+                           axis.line.x = element_blank(),
+                           axis.ticks.x = element_blank(),
+                           axis.text.x = element_blank())
+                 })
+
+plot_H3K27ac = BigwigTrack(GRanges('chr3:34646500-34656000'), 
+                               path_H3K27ac_ChIP,
+                               smooth = 100) +
+                     scale_x_continuous(expand= c(0,0), limits = plot_limits_ChIP) +
+                     ylab('H3K27ac') +
+                     
+                     annotate("rect", xmin = Sox2_gene_annot$cdsStart, xmax = Sox2_gene_annot$cdsEnd, ymin = -Inf, ymax = Inf,alpha = .2, fill = 'red')+
+                     theme(legend.position = 'none',
+                           axis.title.x = element_blank(),
+                           axis.line.x = element_blank(),
+                           axis.ticks.x = element_blank(),
+                           axis.text.x = element_blank())
+
+plot_gene_annot = ggplot(data = Sox2_gene_annot) +
+  geom_rect(aes(xmin = txStart, xmax = txEnd), ymin = 0.2, ymax = 0.4) +
+  geom_rect(aes(xmin = cdsStart, xmax = cdsEnd), ymin = 0, ymax = 0.6) +
+  geom_vline(xintercept = start(CTCF_mm10.chr3_extra ), col = 'darkgrey',  lty="11") +
+  
+  scale_x_continuous(limits = plot_limits_ChIP, expand = c(0,0),
+                     breaks = scales::pretty_breaks(n = 4), labels = scales::unit_format(scale = 1E-6, accuracy = 0.002, unit=NULL)) +
+  scale_y_continuous(limits = c(0,0.6)) +
+  theme_classic() +
+  theme(legend.position = 'none')
+
+cowplot::plot_grid(plotlist = c(list(plot_gene_annot),
+                                list(plot_H3K27ac),
+                                plot_ls),
+                   ncol = 1, align="v", axis="lr", heights = c(1, rep(0.5,7)))
+
+```
