@@ -93,15 +93,13 @@ pdf.options(useDingbats = FALSE)
 
 ## File paths
 ```{r}
+#CTCF motifs
 path_CTCF_sites = "/DATA/usr/v.franceschini/Workspaces/2024_01_MATHIAS_CTCF_PEAKS/VF240812_calling_CTCF_motifs_again/02_OUTPUTS/CTCF_sites/6764_2_ME_E2_CGATGT_S2_R1_001_peaks_motifs.bed"
 
-path_fcs_E2211 = '/DATA/usr/c.moene/projects/Hopping_Sox2_mTurq/E2211_CRISPR_Sox2_del_1/fcs_for_R'
+#Sox2 CRISPR experiment
 path_fcs_E2736 = '/DATA/usr/m.eder/projects/FACS_data/E2736/me20250206_E2736_sox2_deletion/singlecells_for_R'
 
-# E2263 WT samples (for negative cutoffs) 
-path_fcs_WT_E2263_1 = "/DATA/usr/c.moene/projects/Hopping_Sox2_mTurq/E2263_CRISPR_Sox2_del_2/fcs_for_R/export_me20230627_E2263_WT_neg_ctrl_001_Single Cells.fcs"
-path_fcs_WT_E2263_2 = "/DATA/usr/c.moene/projects/Hopping_Sox2_mTurq/E2263_CRISPR_Sox2_del_2/fcs_for_R/export_me20230630_E2263_WT_neg_ctrl_001_Single Cells.fcs"
-
+#clones
 path_annotation_clones_E2350 = "/DATA/usr/c.moene/projects/Hopping_Sox2_mTurq/E2350_generating_CRISPR_clones/CM20240221_E2350_fcs_files_tib.rds"
 
 #hopping data
@@ -133,7 +131,6 @@ paths_ChIP_files = c(
 )
 
 #functions
-# source("/DATA/usr/c.moene/projects/Hopping_Sox2_mTurq/Combined_for_paper/general_functions/CM20230814_general_plotting_functions.R") #test if we need this, I don't think we do
 source("/DATA/projects/Sox2/General_functions/CM20250318_new_expression_score_functions.R")
 
 ```
