@@ -1,0 +1,365 @@
+---
+title: "CM20250424_hopping_statistics"
+author: "Mathias & Christine"
+date: "2025-03-31"
+output: 
+  html_document:
+    theme: journal #cerulean
+    highlight: monochrome
+    toc: true
+    toc_float: true
+    code_folding: show
+  editor_options:
+    chunk_output_type: console
+---
+
+#Goal
+Make a table of the number of integrations per cell line and population. This is the source for table S7.
+
+
+```{r load_libraries}
+
+# Load dependencies
+library(GenomicRanges)
+# library(rtracklayer)
+library(tidyverse)
+# library(gtools)
+library(tidyverse)
+# library(dtplyr)
+library(dplyr)
+# library(tidyr)
+# library(ggbeeswarm)
+# library(ggplot2)
+library(Biostrings)
+library(stringr)
+library(readr)
+library(knitr)
+# library(RColorBrewer)
+# library(cowplot)
+# library(RcppRoll)
+# library(viridis)
+# library(ggh4x)
+# library(ggrastr)
+# library(caTools)
+# library(readxl)
+# import::from(flowCore, .except=c("filter")) #I don't load the whole flowCore and ggcyto libraries, because they overwrite dplyr's filter function :0
+# import::from(ggcyto, 'fortify_fs')
+# library(GGally)
+# library(GENOVA)
+# library(ggpubr)
+# library(ggridges)
+# library(ggpmisc)
+
+split_string <- function(vect,sep,N1,N2=N1){
+  library(stringr)
+  sapply(vect, function(X){
+    paste(str_split(X,sep)[[1]][N1:N2],collapse = sep)
+  },USE.NAMES = F)
+}
+
+
+```
+
+# Paths & parameters
+```{r paths_parameters}
+#datatag
+datetag = paste0("CM",format(Sys.time(), '%Y%m%d'))
+
+# Prepare output 
+output_dir <- paste0("/DATA/projects/Sox2/Figure_reporter_only_hopping/analysis_",datetag)
+dir.create(output_dir, showWarnings = FALSE)
+
+```
+
+```{r knits setup}
+
+library(knitr)
+opts_chunk$set(cache = T,
+               message = F, 
+               warning = F,
+               dev=c('png', 'pdf'), 
+               dpi = 600,
+               fig.path = file.path(output_dir, "figures/"),
+               cache.lazy = F) 
+pdf.options(useDingbats = FALSE)
+```
+
+
+## File paths
+```{r}
+path_CTCF_sites = "/DATA/usr/v.franceschini/Workspaces/2024_01_MATHIAS_CTCF_PEAKS/VF240812_calling_CTCF_motifs_again/02_OUTPUTS/CTCF_sites/6764_2_ME_E2_CGATGT_S2_R1_001_peaks_motifs.bed"
+
+# path_tib_23_ints = "/DATA/projects/Sox2/GEO_collection/Tagmentation/mapped_integrations_-116kb_Sox2P_pools.txt"
+path_tib_23_ints = "/DATA/projects/Sox2/GEO_collection/Tagmentation/still_to_upload/mapped_integrations_-116kb_Sox2P_pools.txt"
+
+path_tib_C9_ints = "/DATA/projects/Sox2/GEO_collection/Tagmentation/mapped_integrations_-161kb_Sox2P_pools.txt"
+
+path_tib_C10_ints = "/DATA/projects/Sox2/GEO_collection/Tagmentation/still_to_upload/mapped_integrations_+715kb_Sox2P_pools.txt"
+
+path_tib_C9_41_ints = "/DATA/projects/Sox2/GEO_collection/Tagmentation/mapped_integrations_-161kb_Sox2P_CDS_pools.txt"
+path_tib_C9_mChneg_ints = "/DATA/projects/Sox2/GEO_collection/Tagmentation/still_to_upload/mapped_integrations_-161kb_Sox2mCherrydel_Sox2P_pools.txt"
+
+
+path_median_mTurq_relevant_cell_lines =  "/DATA/projects/Sox2/Figure_reporter_only_hopping/CM20250318_median_mTurq_sorting_for_paper.tsv"
+path_sorting_stats = "/DATA/projects/Sox2/Figure_reporter_only_hopping/CM20250327_stats_for_expression_score_for_paper.xlsx"
+
+path_CRE6_ints = "/DATA/projects/Sox2/GEO_collection/Tagmentation/mapped_integrations_short_neutral_insert.txt"
+
+```
+
+## Annotations
+```{r}
+prange_zoom_paper = c(34.59E6, 34.83E6)
+range_2Mb = c(33.643960E6, 35.643960E6)
+
+```
+
+# Load all data
+
+mCh+ Sox2P hopping (3LPs)
+```{r}
+#load the -116kb data (LP23)
+tib_23_all_data = read_tsv(path_tib_23_ints) %>%
+  filter(chr %in% paste0("chr", c(1:19, "X"))) %>%
+  mutate(chr = factor(chr, levels = paste0("chr", c(1:19, "X")))) 
+
+#the control pool in E2285 (rep3) was sequenced as 10 separate libraries, combine them into one sample
+tib_23_E2285_ctrls = tib_23_all_data %>%
+  filter(replicate == "rep3" & insert == "Sox2P" & sample_type == "control pool") %>%
+  mutate(sample_name = "Sox2P-reporter -116 kb, unsorted control pool rep3")%>%
+  group_by(chr, start, end, seq, strand, replicate, experiment, launch_pad_location, insert, genotype, sample_type, sorted_gate, pool_nr, sample_name) %>%
+  summarize(read_count = sum(read_count),
+            read_count_1 = sum(read_count_1),
+            read_count_2 = sum(read_count_2), .groups = "keep") 
+
+tib_23 = tib_23_all_data %>%
+  #select the rest of the data
+  filter(!(replicate == "rep3" & insert == "Sox2P" & sample_type == "control pool")) %>%
+  select(chr, start, end, seq, strand, replicate, experiment, launch_pad_location, insert, genotype, sample_type, sorted_gate, pool_nr, sample_name,
+         read_count, read_count_1, read_count_2)%>%
+  #add merged controls back in
+  bind_rows(tib_23_E2285_ctrls) %>%
+  #mark hopped integrations
+  mutate(hopped = start != 34643961)
+
+#load the -161kb data (LP C9)
+tib_C9 = read_tsv(path_tib_C9_ints) %>%
+  filter(chr %in% paste0("chr", c(1:19, "X"))) %>%
+  mutate(chr = factor(chr, levels = paste0("chr", c(1:19, "X")))) %>%
+  #combine the 2 libraries of "Sox2P-reporter -161 kb, population P1 pool1 rep2"
+  mutate(to_merge = case_when(replicate == "rep2" & insert == "Sox2P" & sorted_gate == "P1" ~ "merge",
+                              .default = sample_name)) %>%
+  mutate(sample_name = case_when(to_merge == "merge" ~ "Sox2P-reporter -161 kb, population P1 pool1 rep2",
+                             .default = sample_name)) %>%
+  group_by(chr, start, end, seq, strand, replicate, experiment, launch_pad_location, insert, genotype, sample_type, sorted_gate, pool_nr, sample_name) %>%
+  summarize(read_count = sum(read_count),
+            read_count_1 = sum(read_count_1),
+            read_count_2 = sum(read_count_2), .groups = "keep") %>%
+  #mark hopped integrations
+  mutate(hopped = start != 34598479)
+  
+#load the +715kb data (LP C10)
+tib_C10 = read_tsv(path_tib_C10_ints) %>%
+  filter(chr %in% paste0("chr", c(1:19, "X"))) %>%
+  mutate(chr = factor(chr, levels = paste0("chr", c(1:19, "X")))) %>%
+  group_by(chr, start, end, seq, strand, replicate, experiment, launch_pad_location, insert, genotype, sample_type, sorted_gate, pool_nr, sample_name) %>%
+  summarize(read_count = sum(read_count),
+            read_count_1 = sum(read_count_1),
+            read_count_2 = sum(read_count_2), .groups = "keep") %>%
+  #mark hopped integrations
+  mutate(hopped = start != 35478413)
+  
+```
+
+Sox2P mCh-
+
+```{r}
+
+#load the -161kb mCh- data (LP C9)
+tib_C9_mChneg = read_tsv(path_tib_C9_mChneg_ints) %>%
+  filter(chr %in% paste0("chr", c(1:19, "X"))) %>%
+  mutate(chr = factor(chr, levels = paste0("chr", c(1:19, "X")))) %>%
+  group_by(chr, start, end, seq, strand, replicate, experiment, launch_pad_location, insert, genotype, sample_type, sorted_gate, pool_nr, sample_name) %>%
+  summarize(read_count = sum(read_count),
+            read_count_1 = sum(read_count_1),
+            read_count_2 = sum(read_count_2), .groups = "keep") %>%
+  ungroup() %>%
+  #mark hopped integrations
+  mutate(hopped = start != 34598479) 
+
+```
+
+Sox2P_CDS
+```{r}
+#load the -161kb mCh+ Sox2P_CDS data (C9_mCh_41)
+tib_C9_41 = read_tsv(path_tib_C9_41_ints) %>%
+  filter(chr %in% paste0("chr", c(1:19, "X"))) %>%
+  mutate(chr = factor(chr, levels = paste0("chr", c(1:19, "X")))) %>%
+  group_by(chr, start, end, seq, strand, replicate, experiment, launch_pad_location, insert, genotype, sample_type, sorted_gate, pool_nr, sample_name) %>%
+  summarize(read_count = sum(read_count),
+            read_count_1 = sum(read_count_1),
+            read_count_2 = sum(read_count_2), .groups = "keep") %>%
+  ungroup() %>%
+  #mark hopped integrations
+  mutate(hopped = start != 34598479)
+```
+
+combine and filter
+```{r}
+#filter the integrations
+tib_filtered <- bind_rows(tib_23, tib_C9, tib_C10, tib_C9_41, tib_C9_mChneg)  %>%
+  #add variables used in the plotting (old names of cell lines etc) 
+  mutate(population = case_when(sample_type == "control pool" ~ "ctrl",
+                                .default = sorted_gate),
+         cell_line = case_when(launch_pad_location == "-116 kb" & insert == "Sox2P" ~ "23_34A",
+                               launch_pad_location == "-161 kb" & insert == "Sox2P" & genotype == "WT" ~ "C9_mCh_34",
+                               launch_pad_location == "-161 kb" & insert == "Sox2P" & genotype == "Sox2::mCherry deleted" ~ "C9_mCh-_34",
+                               launch_pad_location == "-161 kb" & insert == "Sox2P_CDS" & genotype == "WT" ~ "C9_mCh_41",
+                               launch_pad_location == "+715 kb" & insert == "Sox2P" ~ "C10_34"),
+         landing_pad = case_when(launch_pad_location == "-116 kb" ~ "23",
+                                 launch_pad_location == "-161 kb" ~ "C9",
+                                 launch_pad_location == "+715 kb" ~ "C10")) %>%
+  #annotate confidence of mapping (one or both ITRs)
+  mutate(mapped_arms = case_when(read_count_1 == 0 ~ "rv_only",
+                                 read_count_2 == 0 ~ "fw_only",
+                                 read_count_1 > 0 & read_count_2 > 0 ~ "both_arms")) %>%
+  #filter the data
+  filter(population == "ctrl" | read_count >= 2) %>% #for ctrl distribution 1 mapping read is enough
+  filter(!(start >= 34721183 & start <= 34721192)) %>% #remove contamination from LP8
+  filter(! start %in% c(25018987, 35232946) ) %>% #remove contamination clone C1
+  filter(landing_pad  == "C9" | start != 34598479) %>% #remove contamination from LP C9
+  filter(landing_pad  == "23" | start != 34643961) %>% #remove contamination from LP 23
+  filter(landing_pad  == "C10" | start != 35478413) %>% #remove contamination from LP C10
+  filter(strand %in% c("+", "-"))
+
+
+tib_filtered_P1_strict = tib_filtered %>%
+  filter(!(population == "P1" & mapped_arms != "both_arms")) #only keep P1 integrations with 2 mapped arms
+
+all_exp = unique(tib_filtered_P1_strict$experiment)
+```
+
+
+# make tables
+```{r}
+
+tib_filtered_P1_strict %>% 
+  filter(population != "ctrl" & chr == "chr3") %>%
+  group_by(cell_line) %>%
+  summarize(N = n())
+
+```
+Shape of the table:
+one block per cell line, one row per population
+one column per location (genomewide, chr3, within 2Mb region)
+```{r}
+
+tib_stats_per_pop = tib_filtered_P1_strict %>% 
+  mutate(population = factor(population, levels = c("ctrl", "P1_H", "P1", "P1_L", "P2_H", "P2", "P2_L", paste0("P", 3:6)))) %>%
+  mutate(chr3 = chr == "chr3",
+         in_wide_locus = start >= range_2Mb[1] & start <= range_2Mb[2],
+         in_narrow_locus = start >= prange_zoom_paper[1] & start <= prange_zoom_paper[2]) %>%
+  group_by(cell_line, population) %>%
+  summarize(N_genomewide = n(),
+            # N_chr3 = sum(chr3),
+            N_in_wide_locus = sum(in_wide_locus),
+            N_in_narrow_locus = sum(in_narrow_locus))
+
+tib_stats_per_cl = tib_filtered_P1_strict %>% 
+  mutate(population = factor(population, levels = c("ctrl", "P1_H", "P1", "P1_L", "P2_H", "P2", "P2_L", paste0("P", 3:6)))) %>%
+  mutate(chr3 = chr == "chr3",
+         in_wide_locus = start >= range_2Mb[1] & start <= range_2Mb[2],
+         in_narrow_locus = start >= prange_zoom_paper[1] & start <= prange_zoom_paper[2]) %>%
+  group_by(cell_line) %>%
+  summarize(N_genomewide = n(),
+            # N_chr3 = sum(chr3),
+            N_in_wide_locus = sum(in_wide_locus),
+            N_in_narrow_locus = sum(in_narrow_locus))
+
+formatted_stats_tib = tib_stats_per_cl %>% 
+  mutate(population = "all") %>%
+  bind_rows(tib_stats_per_pop) %>%
+  select(cell_line, population, N_genomewide, N_in_wide_locus, N_in_narrow_locus) %>%
+  mutate(population = 
+           factor(population, levels = c("all", "ctrl", "P1_H", "P1", "P1_L", "P2_H", "P2", "P2_L", paste0("P", 3:6))),
+         cell_line = factor(cell_line, levels = c("C9_mCh_34", "23_34A", "C10_34", "C9_mCh-_34", "C9_mCh_41"))) %>%
+  arrange(cell_line, population) %>%
+  mutate(cell_line_name = case_when(cell_line == "23_34A" ~ "Sox2P-reporter -116 kb",
+                                    cell_line == "C10_34" ~ "Sox2P-reporter +715 kb",
+                                    cell_line == "C9_mCh_34" ~ "Sox2P-reporter -161 kb",
+                                     cell_line == "C9_mCh-_34" ~ "Sox2P-reporter -161 kb Sox2::mCherry deleted",
+                                    cell_line == "C9_mCh_41" ~ "Sox2P_CDS-reporter -161 kb"))
+  
+# write_tsv(formatted_stats_tib, "/DATA/projects/Sox2/Figure_reporter_only_hopping/CM20250424_integration_stats.tsv")
+```
+
+
+```{r}
+
+filter(tib_filtered_P1_strict, hopped & experiment %in% all_exp & cell_line %in% c("23_34A", "C9_mCh_34", "C10_34")) %>%
+  filter(population != "ctrl") %>%
+  group_by(cell_line) %>%
+  summarize(N = n())
+
+```
+
+
+# calculate and add proof-of-principle experiment
+
+
+```{r}
+tib_E2226 <- read_tsv(path_CRE6_ints)
+
+# Change mapping quality to numeric
+tib_E2226 <- tib_E2226 %>%
+  mutate(mapq_1 = as.numeric(mapq_1),
+         mapq_2 = as.numeric(mapq_2),
+         mapq_1 = replace_na(mapq_1, 0),
+         mapq_2 = replace_na(mapq_2, 0))
+
+# Factors for chr
+chromosomes <- paste0("chr", c(1:19, "X"))
+
+tib_E2226 <- tib_E2226 %>%
+  mutate(chr = factor(chr, levels = chromosomes)) %>%
+  drop_na(chr)
+
+tib_E2226 = tib_E2226 %>% 
+  mutate(cell_line = "CRE6",
+         population = "ctrl") %>%
+  mutate(mapped_arms = case_when(read_count_1 == 0 ~ "rv_only",
+                                 read_count_2 == 0 ~ "fw_only",
+                                 read_count_1 > 0 & read_count_2 > 0 ~ "both_arms")) %>%
+  mutate(hopped = start != 34643961) 
+
+#Filter table
+tib_E2226_filt = tib_E2226 %>% 
+  filter(population == "ctrl" | read_count >= 2) %>% #require at least two reads except for ctrl
+  filter(!(start >= 34721183 & start <= 34721192)) %>% #remove contamination from LP8
+  filter(strand %in% c("+", "-")) #because we sometimes split by strand, I'd prefer to remove the ambiguous integrations from all analyses
+
+#E2226 had 10 control reactions sequenced with separate indices, here we combine them to get comparable data to the other experiments (with 1 index pair for the control pool)
+tib_E2226_comb = tib_E2226_filt %>%
+  group_by(cell_line, population, chr, start, end, seq, strand, experiment) %>%
+  summarize(read_count = sum(read_count),
+            read_count_1 = sum(read_count_1),
+            read_count_2 = sum(read_count_2)) %>%
+  mutate(sample = paste0(cell_line, "_", population))  %>%
+  mutate(mapped_arms = case_when(read_count_1 == 0 ~ "rv_only",
+                                 read_count_2 == 0 ~ "fw_only",
+                                 read_count_1 > 0 & read_count_2 > 0 ~ "both_arms")) %>%
+  mutate(hopped = start != 34643961) 
+
+
+E2226_stats_tib = tib_E2226_comb %>%
+  mutate(chr3 = chr == "chr3",
+         in_wide_locus = start >= range_2Mb[1] & start <= range_2Mb[2],
+         in_narrow_locus = start >= prange_zoom_paper[1] & start <= prange_zoom_paper[2]) %>%
+  group_by(cell_line) %>%
+  summarize(N_genomewide = n(),
+            # N_chr3 = sum(chr3),
+            N_in_wide_locus = sum(in_wide_locus),
+            N_in_narrow_locus = sum(in_narrow_locus))
+
+E2226_stats_tib
+```
