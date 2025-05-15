@@ -137,6 +137,10 @@ path_WT_ctrl_E2250 = "/DATA/usr/c.moene/projects/Hopping_Sox2_mTurq/E2250_CRISPR
 
 path_fcs_files_E2762 = '/DATA/projects/Sox2/Figure_FACS_copmensation/fcs_for_R'
 
+#qPCR
+path_qPCR_RNA_stability = "/DATA/projects/Sox2/Figure_Sox2_CDS/me20241217_E2682_all_rep_combined.xlsx"
+qPCR_cell_lines_path = "/DATA/usr/m.eder/projects/qPCR_data/E2682_RNA_stability/me20250110_cell_lines.tsv"
+
 
 #functions
 source("/DATA/projects/Sox2/General_functions/CM20240621_general_plotting_functions.R")
@@ -2155,7 +2159,6 @@ The timecourse has 4 replicates. We also have 1 biological replicate of just RNA
 Load the data
 ```{r}
 
-path_qPCR_RNA_stability = "/DATA/projects/Sox2/Figure_Sox2_CDS/me20241217_E2682_all_rep_combined.xlsx"
 tib_qPCR_raw_t0 = read_xlsx(path_qPCR_RNA_stability ) %>%
   filter(time == 0) %>%
   mutate(Cell_line = case_when(Cell_line == "SoxP" ~ "Sox2P",
@@ -2163,7 +2166,7 @@ tib_qPCR_raw_t0 = read_xlsx(path_qPCR_RNA_stability ) %>%
                                Cell_line == "SoxP UTR" ~ "Sox2P_CDS_UTR",
                                ))
 
-tib_qPCR_cell_lines = read_tsv("/DATA/usr/m.eder/projects/qPCR_data/E2682_RNA_stability/me20250110_cell_lines.tsv")
+tib_qPCR_cell_lines = read_tsv(qPCR_cell_lines_path)
 tib_rep5 = tib_qPCR_cell_lines %>% 
   filter(construct == "34" & landingPad == "LP_-116kb" & status_mCh == "mCh+") %>%
   mutate(Cell_line = "Sox2P",
@@ -2283,7 +2286,7 @@ rm(flowset)
 ```
 
 ## Plot histograms
-```{r}
+```{r S2H_spillover_FACS_plot}
 # Filter relevant cell lines
 flowset_fluo_idx = pData(flowset_fluo)$cell_line %in% c("WT", "F121", "23_34A_mCh-", "23_34_GFP-")
 
